@@ -41,9 +41,7 @@ router.post('/', [
     });
   }
 
-  
-
-  const {
+const {
     items,
     deliveryType,
     paymentMethod,
