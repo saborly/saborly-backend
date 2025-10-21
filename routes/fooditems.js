@@ -459,6 +459,9 @@ router.post('/', [
 // @desc    Update food item
 // @route   PUT /api/v1/food-items/:id
 // @access  Private (Admin/Manager only)
+// @desc    Update food item
+// @route   PUT /api/v1/food-items/:id
+// @access  Private (Admin/Manager only)
 router.put('/:id', [
   auth,
   authorize('admin', 'manager'),
@@ -503,9 +506,73 @@ router.put('/:id', [
     }
   }
 
+  // Build update object with proper multilingual structure
+  const updateData = {};
+  
+  // Handle multilingual name
+  if (req.body.name) {
+    updateData.name = {
+      en: req.body.name.en || item.name.en,
+      es: req.body.name.es || item.name.es || '',
+      ca: req.body.name.ca || item.name.ca || '',
+      ar: req.body.name.ar || item.name.ar || ''
+    };
+  }
+  
+  // Handle multilingual description
+  if (req.body.description) {
+    updateData.description = {
+      en: req.body.description.en || item.description.en,
+      es: req.body.description.es || item.description.es || '',
+      ca: req.body.description.ca || item.description.ca || '',
+      ar: req.body.description.ar || item.description.ar || ''
+    };
+  }
+  
+  // Handle other fields
+  const simpleFields = [
+    'price', 'originalPrice', 'imageUrl', 'images', 'category',
+    'isVeg', 'isVegan', 'isGlutenFree', 'isNutFree', 'spiceLevel',
+    'isFeatured', 'isPopular', 'isActive', 'isAvailable',
+    'preparationTime', 'stockQuantity', 'lowStockAlert',
+    'sku', 'barcode', 'servingSize', 'weight',
+    'availableFrom', 'availableUntil', 'nutrition', 'allergens'
+  ];
+  
+  simpleFields.forEach(field => {
+    if (req.body[field] !== undefined) {
+      updateData[field] = req.body[field];
+    }
+  });
+  
+  // Handle complex multilingual arrays
+  if (req.body.mealSizes) {
+    updateData.mealSizes = req.body.mealSizes;
+  }
+  
+  if (req.body.extras) {
+    updateData.extras = req.body.extras;
+  }
+  
+  if (req.body.addons) {
+    updateData.addons = req.body.addons;
+  }
+  
+  if (req.body.ingredients) {
+    updateData.ingredients = req.body.ingredients;
+  }
+  
+  if (req.body.tags) {
+    updateData.tags = req.body.tags;
+  }
+  
+  if (req.body.seoData) {
+    updateData.seoData = req.body.seoData;
+  }
+
   item = await FoodItem.findByIdAndUpdate(
     req.params.id,
-    req.body,
+    updateData,
     { new: true, runValidators: true }
   ).populate('category', 'name icon');
 
