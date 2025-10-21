@@ -229,23 +229,20 @@ router.get('/getall', [
   const { page = 1, limit = 10, status } = req.query;
   const skip = (page - 1) * limit;
 
-  let query = { userId: req.user.id || req.user._id || req.user.userId };
-  if (status) query.status = status;
+  let queryFilter = {};
+  if (status) queryFilter.status = status;
 
-
-
-  const orders = await Order.find()
+  const orders = await Order.find(queryFilter)
     .populate([
       { path: 'items.foodItem', select: 'name imageUrl price' },
       { path: 'branchId', select: 'name address phone' },
-{ path: 'userId', select: 'firstName lastName phone email', options: { virtuals: true } }
-
+      { path: 'userId', select: 'firstName lastName phone email', options: { virtuals: true } }
     ])
     .sort({ createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip);
 
-  const totalOrders = await Order.countDocuments(query);
+  const totalOrders = await Order.countDocuments(queryFilter);
   const totalPages = Math.ceil(totalOrders / limit);
 
   res.json({
@@ -254,7 +251,7 @@ router.get('/getall', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-  orders:orders
+    orders: orders
   });
 }));
 
