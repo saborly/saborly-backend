@@ -214,5 +214,92 @@ router.patch('/maintenance', [
     maintenanceMode: settings.maintenanceMode
   });
 }));
+router.patch('/delivery/toggle', [
+  auth,
+  authorize('admin', 'manager'),
+  body('isEnabled').isBoolean().withMessage('isEnabled must be boolean'),
+  body('disabledMessage').optional().trim().isLength({ max: 200 })
+    .withMessage('Message cannot exceed 200 characters')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
 
+  const settings = await Setting.findOne();
+  
+  if (!settings) {
+    return res.status(404).json({
+      success: false,
+      message: 'Settings not found'
+    });
+  }
+
+  // Update delivery enabled status
+  settings.deliverySettings.isDeliveryEnabled = req.body.isEnabled;
+  
+  // Update disabled message if provided
+  if (req.body.disabledMessage) {
+    settings.deliverySettings.disabledMessage = req.body.disabledMessage;
+  }
+
+  await settings.save();
+
+  res.json({
+    success: true,
+    message: `Delivery service ${req.body.isEnabled ? 'enabled' : 'disabled'}`,
+    deliverySettings: settings.deliverySettings
+  });
+}));
+
+// @desc    Update delivery settings
+// @route   PATCH /api/v1/settings/delivery
+// @access  Private (Admin/Manager only)
+router.patch('/delivery', [
+  auth,
+  authorize('admin', 'manager'),
+  body('isDeliveryEnabled').optional().isBoolean(),
+  body('defaultDeliveryFee').optional().isFloat({ min: 0 }),
+  body('freeDeliveryThreshold').optional().isFloat({ min: 0 }),
+  body('deliveryRadius').optional().isFloat({ min: 1 }),
+  body('estimatedDeliveryTime').optional().isInt({ min: 10 }),
+  body('disabledMessage').optional().trim().isLength({ max: 200 })
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const settings = await Setting.findOne();
+  
+  if (!settings) {
+    return res.status(404).json({
+      success: false,
+      message: 'Settings not found'
+    });
+  }
+
+  // Update only provided fields
+  Object.keys(req.body).forEach(key => {
+    if (req.body[key] !== undefined) {
+      settings.deliverySettings[key] = req.body[key];
+    }
+  });
+
+  await settings.save();
+
+  res.json({
+    success: true,
+    message: 'Delivery settings updated successfully',
+    deliverySettings: settings.deliverySettings
+  });
+}));
 module.exports = router;

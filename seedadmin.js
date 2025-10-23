@@ -1,43 +1,26 @@
-// scripts/migrateFoodItems.js
+import mongoose from "mongoose";
 
-const mongoose = require('mongoose');
-require('dotenv').config();
+await mongoose.connect("mongodb+srv://db_saborly:Dwdjd12KKC0F1ojJ@cluster0.u1qulrp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0");
 
-// Import models (make sure they use the OLD schema first)
-const { FoodItem, Category } = require('./models/Category');
+const FoodItem = mongoose.connection.collection("banners");
 
-
-async function fixMealSizes() {
-  try {
-     await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✅ Connected to MongoDB');
-
- const items = await FoodItem.find({
-      "mealSizes.name.en": /Large \(36 cm$/
-    });
-
-    console.log(`Found ${items.length} items with corrupted data`);
-
-    for (const item of items) {
-      item.mealSizes = item.mealSizes.map(size => ({
-        ...size.toObject(),
-        name: {
-          en: size.name.en === "Large (36 cm" ? "Large (36 cm)" : size.name.en,
-          es: size.name.es || "",
-          ca: size.name.ca || "",
-          ar: size.name.ar || ""
+await FoodItem.updateMany(
+  { imageUrl: { $regex: "aglhrjakaivffstf\\.public\\.blob\\.vercel-storage\\.com" } },
+  [
+    {
+      $set: {
+        imageUrl: {
+          $replaceOne: {
+            input: "$imageUrl",
+            find: "aglhrjakaivffstf.public.blob.vercel-storage.com",
+            replacement: "isjqrgksamsoj2tf.public.blob.vercel-storage.com"
+           
+          }
         }
-      }));
-      
-      await item.save();
-      console.log(`Fixed: ${item.name.en}`);
+      }
     }
+  ]
+);
 
-    console.log('✅ All meal sizes fixed!');
-  } catch (error) {
-    console.error('Error fixing meal sizes:', error);
-  }
-}
-
-// Run the function
-fixMealSizes();
+console.log("✅ All image URLs updated successfully");
+process.exit();
