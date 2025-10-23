@@ -451,6 +451,7 @@ settingSchema.virtual('fullAddress').get(function() {
   return `${this.address.street}, ${this.address.city}, ${this.address.state} ${this.address.zipCode}, ${this.address.country}`;
 });
 
+
 // Virtual for current operating status
 settingSchema.virtual('isCurrentlyOpen').get(function() {
   const now = new Date();
