@@ -454,9 +454,8 @@ settingSchema.virtual('fullAddress').get(function() {
 // Virtual for current operating status
 settingSchema.virtual('isCurrentlyOpen').get(function() {
   const now = new Date();
-  const currentDay = now.toLocaleLowerCase();
-  const currentTime = now.toTimeString().slice(0, 5);
-  
+const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+const currentTime = now.toTimeString().slice(0, 5);
   const todayHours = this.operatingHours.find(hours => hours.day === currentDay);
   
   if (!todayHours || !todayHours.isOpen) return false;
