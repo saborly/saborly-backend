@@ -7,7 +7,8 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
   const { sendNotificationToDevice } = require('../utils/firebaseAdmin');
-
+const { OAuth2Client } = require('google-auth-library');
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const router = express.Router();
 
 // Temporary storage for pending registrations (in production, use Redis)
@@ -268,6 +269,155 @@ router.post('/resend-registration-otp', [
     return res.status(500).json({
       success: false,
       message: 'Failed to send verification code'
+    });
+  }
+}));
+
+// Add this to your routes/auth.js file
+
+
+
+// @desc    Google Sign-In
+// @route   POST /api/v1/auth/google-signin
+// @access  Public
+router.post('/google-signin', [
+  body('idToken')
+    .notEmpty()
+    .withMessage('Google ID token is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { idToken } = req.body;
+
+  try {
+    // Verify the Google ID token
+    const ticket = await client.verifyIdToken({
+      idToken: idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    
+    if (!payload || !payload.email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Google token'
+      });
+    }
+
+    const {
+      email,
+      given_name: firstName,
+      family_name: lastName,
+      picture: avatar,
+      sub: googleId,
+      email_verified: emailVerified
+    } = payload;
+
+    // Check if user exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists - log them in
+      
+      // Check if user is active
+      if (!user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account has been deactivated. Please contact support.'
+        });
+      }
+
+      // Update last login
+      await user.updateLastLogin();
+
+      // Generate token
+      const token = user.generateAuthToken();
+
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          avatar: user.avatar,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+    } else {
+      // User doesn't exist - create new account
+      
+      // Generate a random phone number placeholder or leave empty
+      const phone = ''; // You might want to prompt user to add phone later
+      
+      // Create user (no password needed for Google sign-in)
+      // Generate a secure random password that user won't know/use
+      const randomPassword = require('crypto').randomBytes(32).toString('hex');
+      
+      user = await User.create({
+        firstName: firstName || 'User',
+        lastName: lastName || '',
+        email,
+        phone,
+        password: randomPassword,
+        avatar,
+        emailVerified: emailVerified || false,
+        // You might want to add a field to track OAuth provider
+        // authProvider: 'google',
+        // googleId: googleId,
+      });
+
+      // Update last login
+      await user.updateLastLogin();
+
+      // Generate token
+      const token = user.generateAuthToken();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Account created successfully',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          avatar: user.avatar,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Google Sign-In error:', error);
+    
+    if (error.message && error.message.includes('Token')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Google token'
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Google sign-in failed. Please try again.'
     });
   }
 }));

@@ -45,11 +45,23 @@ const userSchema = new mongoose.Schema({
       'Please provide a valid email'
     ]
   },
-  phone: {
+   authProvider: {
     type: String,
-    required: [true, 'Phone number is required'],
-    match: [/^\+?[\d\s-()]+$/, 'Please provide a valid phone number']
+    enum: ['email', 'google', 'apple'],
+    default: 'email'
   },
+  googleId: {
+    type: String,
+    sparse: true,
+    unique: true
+  },
+phone: {
+  type: String,
+  required: function() {
+    return this.authProvider === 'email'; // Only required for email auth
+  },
+  match: [/^\+?[\d\s-()]+$/, 'Please provide a valid phone number']
+},
   password: {
     type: String,
     required: [true, 'Password is required'],
