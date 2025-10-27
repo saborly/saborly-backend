@@ -835,7 +835,145 @@ router.post('/reset-password', [
     });
   }
 }));
+// Add this route to your routes/auth.js file (after the existing google-signin route)
 
+// @desc    Google Sign-In for Web (using userInfo instead of ID token)
+// @route   POST /api/v1/auth/google-signin-web
+// @access  Public
+router.post('/google-signin-web', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Valid email is required'),
+  body('firstName')
+    .notEmpty()
+    .withMessage('First name is required'),
+  body('googleId')
+    .notEmpty()
+    .withMessage('Google ID is required'),
+  body('accessToken')
+    .notEmpty()
+    .withMessage('Access token is required'),
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email, firstName, lastName, googleId, accessToken } = req.body;
+
+  try {
+    // Verify the access token with Google
+    const axios = require('axios');
+    const tokenInfoResponse = await axios.get(
+      `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
+    );
+
+    if (tokenInfoResponse.data.email !== email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid access token or email mismatch'
+      });
+    }
+
+    // Check if user exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists - log them in
+      
+      // Check if user is active
+      if (!user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account has been deactivated. Please contact support.'
+        });
+      }
+
+      // Update last login
+      await user.updateLastLogin();
+
+      // Generate token
+      const token = user.generateAuthToken();
+
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          avatar: user.avatar,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+    } else {
+      // User doesn't exist - create new account
+      
+      const phone = ''; // User can add phone later
+      
+      // Generate a secure random password for OAuth users
+      const randomPassword = require('crypto').randomBytes(32).toString('hex');
+      
+      user = await User.create({
+        firstName: firstName || 'User',
+        lastName: lastName || '',
+        email,
+        phone,
+        password: randomPassword,
+        emailVerified: tokenInfoResponse.data.verified_email || false,
+      });
+
+      // Update last login
+      await user.updateLastLogin();
+
+      // Generate token
+      const token = user.generateAuthToken();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Account created successfully',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          avatar: user.avatar,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Google Web Sign-In error:', error);
+    
+    if (error.response && error.response.status === 400) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Google access token'
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Google sign-in failed. Please try again.'
+    });
+  }
+}));
 // @desc    Resend password reset OTP
 // @route   POST /api/v1/auth/resend-reset-otp
 // @access  Public
