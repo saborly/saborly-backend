@@ -45,7 +45,7 @@ const userSchema = new mongoose.Schema({
       'Please provide a valid email'
     ]
   },
-   authProvider: {
+  authProvider: {
     type: String,
     enum: ['email', 'google', 'apple'],
     default: 'email'
@@ -55,13 +55,22 @@ const userSchema = new mongoose.Schema({
     sparse: true,
     unique: true
   },
-phone: {
-  type: String,
-  required: function() {
-    return this.authProvider === 'email'; // Only required for email auth
+  phone: {
+    type: String,
+    required: function() {
+      // Only required for email auth, optional for OAuth
+      return this.authProvider === 'email';
+    },
+    validate: {
+      validator: function(v) {
+        // If phone is provided, validate format
+        if (!v || v === '') return true;
+        return /^\+?[\d\s-()]+$/.test(v);
+      },
+      message: 'Please provide a valid phone number'
+    },
+    default: '' // Set default empty string for OAuth users
   },
-  match: [/^\+?[\d\s-()]+$/, 'Please provide a valid phone number']
-},
   password: {
     type: String,
     required: [true, 'Password is required'],
@@ -90,7 +99,7 @@ phone: {
     type: Boolean,
     default: false
   },
-    fcmToken: {
+  fcmToken: {
     type: String,
     default: null
   },
@@ -164,6 +173,7 @@ userSchema.pre('save', async function(next) {
 userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
+
 userSchema.methods.generatePasswordResetOTP = function() {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   
@@ -185,6 +195,7 @@ userSchema.methods.verifyPasswordResetOTP = function(enteredOTP) {
   
   return this.resetPasswordOTP === enteredOTP;
 };
+
 // Generate JWT token
 userSchema.methods.generateAuthToken = function() {
   return jwt.sign(
@@ -287,6 +298,7 @@ userSchema.methods.deleteAddress = function(addressId) {
 userSchema.methods.getDefaultAddress = function() {
   return this.addresses.find(addr => addr.isDefault) || this.addresses[0] || null;
 };
+
 userSchema.methods.updateFCMToken = async function(token, deviceId, platform) {
   // Remove old token for this device
   this.fcmTokens = this.fcmTokens.filter(t => t.deviceId !== deviceId);
