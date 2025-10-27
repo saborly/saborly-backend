@@ -55,22 +55,17 @@ const userSchema = new mongoose.Schema({
     sparse: true,
     unique: true
   },
-  phone: {
-    type: String,
-    required: function() {
-      // Only required for email auth, optional for OAuth
-      return this.authProvider === 'email';
+phone: {
+  type: String,
+  validate: {
+    validator: function(v) {
+      if (!v || v === '') return true;
+      return /^\+?[\d\s-()]+$/.test(v);
     },
-    validate: {
-      validator: function(v) {
-        // If phone is provided, validate format
-        if (!v || v === '') return true;
-        return /^\+?[\d\s-()]+$/.test(v);
-      },
-      message: 'Please provide a valid phone number'
-    },
-    default: '' // Set default empty string for OAuth users
+    message: 'Please provide a valid phone number'
   },
+  default: '' // Set default empty string
+},
   password: {
     type: String,
     required: [true, 'Password is required'],
