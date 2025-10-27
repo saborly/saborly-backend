@@ -840,6 +840,11 @@ router.post('/reset-password', [
 // @desc    Google Sign-In for Web (using userInfo instead of ID token)
 // @route   POST /api/v1/auth/google-signin-web
 // @access  Public
+// Replace the existing google-signin-web route with this updated version
+
+// @desc    Google Sign-In for Web (using userInfo instead of ID token)
+// @route   POST /api/v1/auth/google-signin-web
+// @access  Public
 router.post('/google-signin-web', [
   body('email')
     .isEmail()
@@ -909,7 +914,7 @@ router.post('/google-signin-web', [
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
-          phone: user.phone,
+          phone: user.phone || '', // Return empty string if no phone
           role: user.role,
           avatar: user.avatar,
           emailVerified: user.emailVerified,
@@ -920,8 +925,6 @@ router.post('/google-signin-web', [
     } else {
       // User doesn't exist - create new account
       
-      const phone = ''; // User can add phone later
-      
       // Generate a secure random password for OAuth users
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
       
@@ -929,8 +932,10 @@ router.post('/google-signin-web', [
         firstName: firstName || 'User',
         lastName: lastName || '',
         email,
-        phone,
+        phone: '', // Empty string for OAuth users
         password: randomPassword,
+        authProvider: 'google', // Mark as Google OAuth user
+        googleId: googleId, // Store Google ID
         emailVerified: tokenInfoResponse.data.verified_email || false,
       });
 
@@ -949,7 +954,7 @@ router.post('/google-signin-web', [
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
-          phone: user.phone,
+          phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
           emailVerified: user.emailVerified,
