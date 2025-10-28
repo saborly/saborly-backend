@@ -30,20 +30,8 @@ exports.submitContactForm = async (req, res) => {
       });
     }
 
-    // Validate message length
-    if (message.length < 10) {
-      return res.status(400).json({
-        success: false,
-        message: 'El mensaje debe tener al menos 10 caracteres'
-      });
-    }
+   
 
-    if (message.length > 2000) {
-      return res.status(400).json({
-        success: false,
-        message: 'El mensaje no puede exceder 2000 caracteres'
-      });
-    }
 
     // Get user IP and user agent
     const ipAddress = req.ip || req.connection.remoteAddress;
