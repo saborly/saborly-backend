@@ -4,7 +4,8 @@ const multilingualTextSchema = new mongoose.Schema({
   en: { type: String, required: true }, // English (required as default)
   es: { type: String, default: '' },    // Spanish (Español)
   ca: { type: String, default: '' },    // Catalan (Català)
-  ar: { type: String, default: '' }     // Arabic (العربية)
+  ar: { type: String, default: '' },    // Arabic (العربية)
+  fr: { type: String, default: '' }     // Added: French (Français)
 }, { _id: false });
 
 const categorySchema = new mongoose.Schema({
@@ -46,11 +47,18 @@ categorySchema.virtual('itemsCount', {
 });
 
 categorySchema.index({ isActive: 1, sortOrder: 1 });
-categorySchema.index({ 'name.en': 'text', 'name.es': 'text', 'name.ca': 'text', 'name.ar': 'text' });
+// Updated index to include French
+categorySchema.index({ 
+  'name.en': 'text', 
+  'name.es': 'text', 
+  'name.ca': 'text', 
+  'name.ar': 'text',
+  'name.fr': 'text' 
+});
 
 // Method to get localized data
 categorySchema.methods.getLocalized = function(lang = 'en') {
-  const validLangs = ['en', 'es', 'ca', 'ar'];
+  const validLangs = ['en', 'es', 'ca', 'ar', 'fr']; // Added French
   const selectedLang = validLangs.includes(lang) ? lang : 'en';
   
   return {
@@ -298,7 +306,7 @@ const foodItemSchema = new mongoose.Schema({
 // Fixed getLocalized method for FoodItem schema
 
 foodItemSchema.methods.getLocalized = function (lang = 'en') {
-  const validLangs = ['en', 'es', 'ca', 'ar'];
+  const validLangs = ['en', 'es', 'ca', 'ar', 'fr']; // Added French
   const selectedLang = validLangs.includes(lang) ? lang : 'en';
 
   // Helper function to extract the correct language from multilingual field
@@ -313,7 +321,7 @@ foodItemSchema.methods.getLocalized = function (lang = 'en') {
     // If it's an object (multilingual), get the requested language
     if (typeof field === 'object') {
       // Return requested language, with fallback order
-      return field[selectedLang] || field['en'] || field['es'] || field['ca'] || field['ar'] || '';
+      return field[selectedLang] || field['en'] || field['es'] || field['ca'] || field['ar'] || field['fr'] || '';
     }
     
     return '';
@@ -388,6 +396,7 @@ foodItemSchema.methods.getLocalized = function (lang = 'en') {
     }
   };
 };
+
 // Virtual for discount percentage
 foodItemSchema.virtual('discountPercentage').get(function() {
   if (this.originalPrice && this.originalPrice > this.price) {
@@ -411,15 +420,18 @@ foodItemSchema.virtual('availabilityStatus').get(function() {
 foodItemSchema.index({ category: 1, isActive: 1 });
 foodItemSchema.index({ isFeatured: 1, isActive: 1 });
 foodItemSchema.index({ isPopular: 1, isActive: 1 });
+// Updated index to include French
 foodItemSchema.index({ 
   'name.en': 'text', 
   'name.es': 'text', 
   'name.ca': 'text', 
   'name.ar': 'text',
+  'name.fr': 'text', // Added French
   'description.en': 'text',
   'description.es': 'text',
   'description.ca': 'text',
-  'description.ar': 'text'
+  'description.ar': 'text',
+  'description.fr': 'text' // Added French
 });
 
 // Existing methods remain the same...

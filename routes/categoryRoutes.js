@@ -93,10 +93,12 @@ router.post('/', [
   body('name.es').optional().trim(),
   body('name.ca').optional().trim(),
   body('name.ar').optional().trim(),
+  body('name.fr').optional().trim(), // Added French
   body('description.en').optional().trim(),
   body('description.es').optional().trim(),
   body('description.ca').optional().trim(),
   body('description.ar').optional().trim(),
+  body('description.fr').optional().trim(), // Added French
   body('icon').optional().trim(),
   body('sortOrder').optional().isInt({ min: 0 }).withMessage('Sort order must be non-negative')
 ], asyncHandler(async (req, res) => {
@@ -129,10 +131,12 @@ router.put('/:id', [
   body('name.es').optional().trim(),
   body('name.ca').optional().trim(),
   body('name.ar').optional().trim(),
+  body('name.fr').optional().trim(), // Added French
   body('description.en').optional().trim(),
   body('description.es').optional().trim(),
   body('description.ca').optional().trim(),
   body('description.ar').optional().trim(),
+  body('description.fr').optional().trim(), // Added French
   body('icon').optional().trim(),
   body('sortOrder').optional().isInt({ min: 0 })
 ], asyncHandler(async (req, res) => {
@@ -154,9 +158,42 @@ router.put('/:id', [
     });
   }
 
+  // Build update object with proper multilingual structure including French
+  const updateData = {};
+  
+  // Handle multilingual name
+  if (req.body.name) {
+    updateData.name = {
+      en: req.body.name.en || category.name.en,
+      es: req.body.name.es || category.name.es || '',
+      ca: req.body.name.ca || category.name.ca || '',
+      ar: req.body.name.ar || category.name.ar || '',
+      fr: req.body.name.fr || category.name.fr || '' // Added French
+    };
+  }
+  
+  // Handle multilingual description
+  if (req.body.description) {
+    updateData.description = {
+      en: req.body.description.en || category.description.en,
+      es: req.body.description.es || category.description.es || '',
+      ca: req.body.description.ca || category.description.ca || '',
+      ar: req.body.description.ar || category.description.ar || '',
+      fr: req.body.description.fr || category.description.fr || '' // Added French
+    };
+  }
+  
+  // Handle other fields
+  const simpleFields = ['icon', 'imageUrl', 'isActive', 'sortOrder'];
+  simpleFields.forEach(field => {
+    if (req.body[field] !== undefined) {
+      updateData[field] = req.body[field];
+    }
+  });
+
   category = await Category.findByIdAndUpdate(
     req.params.id,
-    req.body,
+    updateData,
     { new: true, runValidators: true }
   );
 

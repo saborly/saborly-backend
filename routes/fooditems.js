@@ -67,14 +67,16 @@ router.get('/', [
     if (priceMax !== undefined) query.price.$lte = parseFloat(priceMax);
   }
 
-  // Search functionality - search in current language
+  // Search functionality - search in current language including French
   if (search) {
     const lang = req.language;
     query.$or = [
       { [`name.${lang}`]: { $regex: search, $options: 'i' } },
       { [`description.${lang}`]: { $regex: search, $options: 'i' } },
       { [`name.en`]: { $regex: search, $options: 'i' } },
-      { [`description.en`]: { $regex: search, $options: 'i' } }
+      { [`description.en`]: { $regex: search, $options: 'i' } },
+      { [`name.fr`]: { $regex: search, $options: 'i' } }, // Added French search
+      { [`description.fr`]: { $regex: search, $options: 'i' } } // Added French search
     ];
   }
 
@@ -139,7 +141,7 @@ router.get('/getallitems', [
   query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
   query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
   query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option'),
-  query('lang').optional().isIn(['en', 'es', 'ca', 'ar']).withMessage('Invalid language code'),
+  query('lang').optional().isIn(['en', 'es', 'ca', 'ar', 'fr']).withMessage('Invalid language code'), // Added French
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -182,7 +184,15 @@ router.get('/getallitems', [
   }
   
   if (search) {
-    query.$text = { $search: search };
+    const lang = req.query.lang || req.headers['accept-language']?.split(',')[0] || 'en';
+    query.$or = [
+      { [`name.${lang}`]: { $regex: search, $options: 'i' } },
+      { [`description.${lang}`]: { $regex: search, $options: 'i' } },
+      { [`name.en`]: { $regex: search, $options: 'i' } },
+      { [`description.en`]: { $regex: search, $options: 'i' } },
+      { [`name.fr`]: { $regex: search, $options: 'i' } }, // Added French search
+      { [`description.fr`]: { $regex: search, $options: 'i' } } // Added French search
+    ];
   }
 
   // Build sort options
@@ -229,7 +239,7 @@ router.get('/getallitems', [
     totalItems: totalItems,
     totalPages: totalPages,
     currentPage: parseInt(page),
-    availableLanguages: ['en', 'es', 'ca', 'ar'],
+    availableLanguages: ['en', 'es', 'ca', 'ar', 'fr'], // Added French
     items: items,
   });
 }));
@@ -420,10 +430,12 @@ router.post('/', [
   body('name.es').optional().trim(),
   body('name.ca').optional().trim(),
   body('name.ar').optional().trim(),
+  body('name.fr').optional().trim(), // Added French
   body('description.en').trim().notEmpty().withMessage('English description is required'),
   body('description.es').optional().trim(),
   body('description.ca').optional().trim(),
   body('description.ar').optional().trim(),
+  body('description.fr').optional().trim(), // Added French
   body('price').isFloat({ min: 0 }).withMessage('Price must be non-negative'),
   body('imageUrl').isURL().withMessage('Valid image URL is required'),
   body('category').isMongoId().withMessage('Valid category ID is required')
@@ -470,10 +482,12 @@ router.put('/:id', [
   body('name.es').optional().trim(),
   body('name.ca').optional().trim(),
   body('name.ar').optional().trim(),
+  body('name.fr').optional().trim(), // Added French
   body('description.en').optional().trim().notEmpty(),
   body('description.es').optional().trim(),
   body('description.ca').optional().trim(),
   body('description.ar').optional().trim(),
+  body('description.fr').optional().trim(), // Added French
   body('price').optional().isFloat({ min: 0 }),
   body('imageUrl').optional().isURL(),
   body('category').optional().isMongoId()
@@ -515,7 +529,8 @@ router.put('/:id', [
       en: req.body.name.en || item.name.en,
       es: req.body.name.es || item.name.es || '',
       ca: req.body.name.ca || item.name.ca || '',
-      ar: req.body.name.ar || item.name.ar || ''
+      ar: req.body.name.ar || item.name.ar || '',
+      fr: req.body.name.fr || item.name.fr || '' // Added French
     };
   }
   
@@ -525,7 +540,8 @@ router.put('/:id', [
       en: req.body.description.en || item.description.en,
       es: req.body.description.es || item.description.es || '',
       ca: req.body.description.ca || item.description.ca || '',
-      ar: req.body.description.ar || item.description.ar || ''
+      ar: req.body.description.ar || item.description.ar || '',
+      fr: req.body.description.fr || item.description.fr || '' // Added French
     };
   }
   
@@ -647,4 +663,4 @@ router.patch('/:id/stock', [
   });
 }));
 
-module.exports = router;
+module.exports = router
