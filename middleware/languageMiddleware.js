@@ -4,7 +4,7 @@
 // CRITICAL: The problem is that localizeResponse is converting
 // multilingual objects into single strings, which breaks Flutter parsing
 
-const supportedLanguages = ['en', 'es', 'ca', 'ar'];
+const supportedLanguages = ['en', 'es', 'ca', 'ar','fr'];
 const defaultLanguage = 'en';
 
 /**
@@ -80,7 +80,8 @@ const preserveMultilingualFields = (obj) => {
         en: value.en || '',
         es: value.es || '',
         ca: value.ca || '',
-        ar: value.ar || ''
+        ar: value.ar || '',
+        fr: value.fr || '' // Added French
       };
     }
     // Handle arrays
