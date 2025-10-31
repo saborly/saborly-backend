@@ -211,11 +211,14 @@ const {
 
 
 
+// Replace the /getall route in your orders route file with this:
+
 router.get('/getall', [
   auth,
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
-  query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status')
+  query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
+  query('search').optional().isString().withMessage('Search must be a string')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -226,21 +229,64 @@ router.get('/getall', [
     });
   }
 
-  const { page = 1, limit = 10, status } = req.query;
+  const { page = 1, limit = 10, status, search } = req.query;
   const skip = (page - 1) * limit;
 
   let queryFilter = {};
   if (status) queryFilter.status = status;
 
+  // Handle search - need to search in User collection for customer name
+  if (search && search.trim()) {
+    const searchTerm = search.trim();
+    const searchRegex = { $regex: searchTerm, $options: 'i' };
+
+    // First, find matching users
+    const matchingUsers = await User.find({
+      $or: [
+        { firstName: searchRegex },
+        { lastName: searchRegex },
+        { phone: searchRegex },
+        { email: searchRegex }
+      ]
+    }).select('_id').lean();
+
+    const matchingUserIds = matchingUsers.map(u => u._id);
+
+    // Build search query
+    const searchConditions = [
+      { orderNumber: searchRegex },
+      { 'deliveryAddress.address': searchRegex },
+      { 'deliveryAddress.apartment': searchRegex },
+      { specialInstructions: searchRegex },
+      { customerNotes: searchRegex }
+    ];
+
+    // Add user ID matching if we found any users
+    if (matchingUserIds.length > 0) {
+      searchConditions.push({ userId: { $in: matchingUserIds } });
+    }
+
+    // If search looks like an order number
+    if (searchTerm.match(/^FK\d+$/i)) {
+      queryFilter.orderNumber = searchRegex;
+    } else if (searchTerm.match(/^\d+$/)) {
+      queryFilter.orderNumber = { $regex: `FK.*${searchTerm}`, $options: 'i' };
+    } else {
+      queryFilter.$or = searchConditions;
+    }
+  }
+
+  // Execute query with populations
   const orders = await Order.find(queryFilter)
     .populate([
       { path: 'items.foodItem', select: 'name imageUrl price' },
       { path: 'branchId', select: 'name address phone' },
-      { path: 'userId', select: 'firstName lastName phone email', options: { virtuals: true } }
+      { path: 'userId', select: 'firstName lastName phone email' }
     ])
     .sort({ createdAt: -1 })
     .limit(parseInt(limit))
-    .skip(skip);
+    .skip(skip)
+    .lean();
 
   const totalOrders = await Order.countDocuments(queryFilter);
   const totalPages = Math.ceil(totalOrders / limit);
@@ -254,7 +300,6 @@ router.get('/getall', [
     orders: orders
   });
 }));
-
 router.get('/stats', [
   auth,
   authorize('admin', 'manager'),

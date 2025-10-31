@@ -141,7 +141,7 @@ router.get('/getallitems', [
   query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
   query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
   query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option'),
-  query('lang').optional().isIn(['en', 'es', 'ca', 'ar', 'fr']).withMessage('Invalid language code'), // Added French
+  query('lang').optional().isIn(['en', 'es', 'ca', 'ar', 'fr']).withMessage('Invalid language code'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -183,19 +183,28 @@ router.get('/getallitems', [
     if (priceMax !== undefined) query.price.$lte = parseFloat(priceMax);
   }
   
+  // FIXED: Search logic - use regex instead of text search
   if (search) {
-    const lang = req.query.lang || req.headers['accept-language']?.split(',')[0] || 'en';
+    const searchLang = req.query.lang || req.headers['accept-language']?.split(',')[0] || 'en';
+    const searchRegex = { $regex: search, $options: 'i' };
+    
     query.$or = [
-      { [`name.${lang}`]: { $regex: search, $options: 'i' } },
-      { [`description.${lang}`]: { $regex: search, $options: 'i' } },
-      { [`name.en`]: { $regex: search, $options: 'i' } },
-      { [`description.en`]: { $regex: search, $options: 'i' } },
-      { [`name.fr`]: { $regex: search, $options: 'i' } }, // Added French search
-      { [`description.fr`]: { $regex: search, $options: 'i' } } // Added French search
+      { [`name.${searchLang}`]: searchRegex },
+      { [`description.${searchLang}`]: searchRegex },
+      { [`name.en`]: searchRegex },
+      { [`description.en`]: searchRegex },
+      { [`name.fr`]: searchRegex },
+      { [`description.fr`]: searchRegex },
+      { [`name.es`]: searchRegex },
+      { [`description.es`]: searchRegex },
+      { [`name.ca`]: searchRegex },
+      { [`description.ca`]: searchRegex },
+      { [`name.ar`]: searchRegex },
+      { [`description.ar`]: searchRegex }
     ];
   }
 
-  // Build sort options
+  // FIXED: Build sort options - removed textScore sorting
   let sortOptions = {};
   switch (sortBy) {
     case 'price-low':
@@ -213,12 +222,12 @@ router.get('/getallitems', [
     case 'newest':
       sortOptions = { createdAt: -1 };
       break;
+    case 'relevance':
     default:
-      if (search) {
-        sortOptions = { score: { $meta: 'textScore' } };
-      } else {
-        sortOptions = { 'rating.average': -1 };
-      }
+      // When searching, sort by rating and popularity
+      // When not searching, just sort by rating
+      sortOptions = { 'rating.average': -1, totalSold: -1 };
+      break;
   }
 
   // Execute query
@@ -232,14 +241,13 @@ router.get('/getallitems', [
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 
-  // Return all languages in response (no localization filtering)
   res.json({
     success: true,
     count: items.length,
     totalItems: totalItems,
     totalPages: totalPages,
     currentPage: parseInt(page),
-    availableLanguages: ['en', 'es', 'ca', 'ar', 'fr'], // Added French
+    availableLanguages: ['en', 'es', 'ca', 'ar', 'fr'],
     items: items,
   });
 }));

@@ -248,6 +248,13 @@ orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ deliveryType: 1 });
 orderSchema.index({ createdAt: -1 });
 
+orderSchema.index({ 'deliveryAddress.address': 1 });
+orderSchema.index({ 'deliveryAddress.apartment': 1 });
+
+// Compound index for common queries
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ userId: 1, status: 1 });
+
 // Virtual for status display
 orderSchema.virtual('statusDisplay').get(function() {
   const statusMap = {
