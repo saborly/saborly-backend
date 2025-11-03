@@ -14,7 +14,6 @@ const router = express.Router();
 router.get('/', [
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
   query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
-  query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50')
 ], optionalAuth, asyncHandler(async (req, res) => {
@@ -36,13 +35,9 @@ router.get('/', [
   } = req.query;
 
   const skip = (page - 1) * limit;
-  const now = new Date();
 
-  let query = {
-    isActive: true,
-    startDate: { $lte: now },
-    endDate: { $gte: now }
-  };
+  // For admin view, don't filter by active status and dates
+  let query = {};
 
   if (featured !== undefined) query.isFeatured = featured === 'true';
   if (type) query.type = type;
@@ -67,23 +62,24 @@ router.get('/', [
       }
     })
     .populate('appliedToCategories', 'name icon')
+    .populate({
+      path: 'comboItems.foodItem',
+      select: 'name imageUrl price category'
+    })
     .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip)
     .select('-usageHistory');
 
-  // Filter by user usage if authenticated
-  let filteredOffers = offers;
-  if (req.user) {
-    if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
-      return res.status(400).json({ success: false, message: 'Invalid user ID' });
-    }
-    filteredOffers = offers.filter(offer => offer.canUserUse(req.user.id));
-  }
+  // For admin, don't filter by user usage - show all offers
+  const filteredOffers = offers;
 
   // Calculate discounted prices for items
   const offersWithPrices = filteredOffers.map(offer => {
     const offerObj = offer.toObject();
+    
+    // Add discount display for frontend
+    offerObj.discountDisplay = getDiscountDisplay(offer);
     
     if (offerObj.appliedToItems && offerObj.appliedToItems.length > 0) {
       offerObj.appliedToItems = offerObj.appliedToItems.map(item => {
@@ -112,6 +108,24 @@ router.get('/', [
     offers: offersWithPrices
   });
 }));
+
+// Helper function to generate discount display text
+function getDiscountDisplay(offer) {
+  switch (offer.type) {
+    case 'percentage':
+      return `${offer.value}% OFF`;
+    case 'fixed-amount':
+      return `$${offer.value} OFF`;
+    case 'buy-one-get-one':
+      return 'BOGO';
+    case 'free-delivery':
+      return 'FREE DELIVERY';
+    case 'combo':
+      return 'COMBO DEAL';
+    default:
+      return 'OFFER';
+  }
+}
 
 // Helper function to calculate item discount
 function calculateItemDiscount(originalPrice, offer) {
