@@ -160,16 +160,15 @@ function calculateItemDiscount(originalPrice, offer) {
 // In your backend route for /api/v1/offer/items-with-offers
 router.get('/items-with-offers', [
   query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all'),
-  query('includeUnavailable').optional().isBoolean().withMessage('Include unavailable must be boolean')
+  query('includeUnavailable').optional().isBoolean().withMessage('Include unavailable must be boolean') // Add this
 ], asyncHandler(async (req, res) => {
   const { platform, includeUnavailable } = req.query;
   const now = new Date();
 
   console.log('🔍 [BACKEND] Fetching items with offers');
-  console.log('🔍 [BACKEND] Platform:', platform || 'all');
+  console.log('🔍 [BACKEND] Platform:', platform);
   console.log('🔍 [BACKEND] Include unavailable:', includeUnavailable);
 
-  // ✅ Build offer query with platform filter
   let offerQuery = {
     isActive: true,
     startDate: { $lte: now },
@@ -177,10 +176,11 @@ router.get('/items-with-offers', [
     appliedToItems: { $exists: true, $ne: [] }
   };
 
-  // ✅ Add platform filter to offer query
+  // Add platform filter
   if (platform && platform !== 'all') {
     offerQuery.$or = [
-      { platforms: { $in: ['all', platform] } },
+      { platforms: { $in: ['all'] } },
+      { platforms: { $in: [platform] } },
       { platforms: { $exists: false } },
       { platforms: { $size: 0 } }
     ];
@@ -190,9 +190,8 @@ router.get('/items-with-offers', [
 
   const activeOffers = await Offer.find(offerQuery).populate('appliedToItems');
 
-  console.log('✅ [BACKEND] Found active offers:', activeOffers.length);
+  console.log('🔍 [BACKEND] Found active offers:', activeOffers.length);
   
-  // Collect all item IDs from offers
   const itemIds = new Set();
   activeOffers.forEach(offer => {
     offer.appliedToItems.forEach(item => {
@@ -202,31 +201,31 @@ router.get('/items-with-offers', [
 
   console.log('🔍 [BACKEND] Unique item IDs with offers:', Array.from(itemIds));
 
-  // ✅ Build item query
+  // ✅ FIX: Remove or modify the isActive filter for offer items
   let itemQuery = {
     _id: { $in: Array.from(itemIds) }
   };
   
-  // Only show active items unless explicitly requested to include unavailable
+  // Only filter by isActive if explicitly requested to exclude unavailable
   if (includeUnavailable !== 'true') {
     itemQuery.isActive = true;
   }
 
   const items = await FoodItem.find(itemQuery).populate('category', 'name icon');
 
-  console.log('✅ [BACKEND] Found food items:', items.length);
+  console.log('🔍 [BACKEND] Found food items (after filter):', items.length);
 
-  // Map items with their best offers
   const itemsWithOffers = items.map(item => {
     const itemOffers = activeOffers.filter(offer =>
       offer.appliedToItems.some(oi => oi._id.toString() === item._id.toString())
     );
 
+    console.log('🔍 [BACKEND] Item:', item.name, 'Active:', item.isActive, 'Availability:', item.availabilityStatus, 'Offers:', itemOffers.length);
+
     let bestOffer = null;
     let bestDiscountedPrice = item.price;
     let bestSavings = 0;
 
-    // Find the best offer for this item
     itemOffers.forEach(offer => {
       const discountedPrice = calculateItemDiscount(item.price, offer);
       const savings = item.price - discountedPrice;
@@ -238,7 +237,7 @@ router.get('/items-with-offers', [
           type: offer.type,
           value: offer.value,
           badge: getDiscountDisplay(offer),
-          platforms: offer.platforms || ['all']
+          platforms: offer.platforms
         };
         bestDiscountedPrice = discountedPrice;
         bestSavings = savings;
@@ -254,7 +253,7 @@ router.get('/items-with-offers', [
     };
   });
 
-  console.log('✅ [BACKEND] Final items with offers:', itemsWithOffers.length);
+  console.log('🔍 [BACKEND] Final items with offers:', itemsWithOffers.length);
 
   res.json({
     success: true,
@@ -264,45 +263,6 @@ router.get('/items-with-offers', [
     items: itemsWithOffers
   });
 }));
-
-// Helper function to calculate discount
-function calculateItemDiscount(price, offer) {
-  switch (offer.type) {
-    case 'percentage':
-      const discount = (price * offer.value) / 100;
-      if (offer.maxDiscountAmount && discount > offer.maxDiscountAmount) {
-        return price - offer.maxDiscountAmount;
-      }
-      return price - discount;
-    
-    case 'fixed-amount':
-      return Math.max(0, price - offer.value);
-    
-    case 'buy-one-get-one':
-      return price / 2; // Simplified for single item
-    
-    default:
-      return price;
-  }
-}
-
-// Helper function to get discount display
-function getDiscountDisplay(offer) {
-  switch (offer.type) {
-    case 'percentage':
-      return `${offer.value}% OFF`;
-    case 'fixed-amount':
-      return `$${offer.value} OFF`;
-    case 'buy-one-get-one':
-      return 'BOGO';
-    case 'free-delivery':
-      return 'FREE DELIVERY';
-    case 'combo':
-      return 'COMBO';
-    default:
-      return 'OFFER';
-  }
-}
 
 // @desc    Apply offer to food items
 // @route   POST /api/v1/offers/:id/apply-to-items
