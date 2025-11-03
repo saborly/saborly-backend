@@ -157,11 +157,17 @@ function calculateItemDiscount(originalPrice, offer) {
 // @desc    Get food items with active offers (platform-specific)
 // @route   GET /api/v1/offers/items-with-offers
 // @access  Public
+// In your backend route for /api/v1/offer/items-with-offers
 router.get('/items-with-offers', [
-  query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all')
+  query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all'),
+  query('includeUnavailable').optional().isBoolean().withMessage('Include unavailable must be boolean') // Add this
 ], asyncHandler(async (req, res) => {
-  const { platform } = req.query;
+  const { platform, includeUnavailable } = req.query;
   const now = new Date();
+
+  console.log('🔍 [BACKEND] Fetching items with offers');
+  console.log('🔍 [BACKEND] Platform:', platform);
+  console.log('🔍 [BACKEND] Include unavailable:', includeUnavailable);
 
   let offerQuery = {
     isActive: true,
@@ -180,8 +186,12 @@ router.get('/items-with-offers', [
     ];
   }
 
+  console.log('🔍 [BACKEND] Offer query:', JSON.stringify(offerQuery));
+
   const activeOffers = await Offer.find(offerQuery).populate('appliedToItems');
 
+  console.log('🔍 [BACKEND] Found active offers:', activeOffers.length);
+  
   const itemIds = new Set();
   activeOffers.forEach(offer => {
     offer.appliedToItems.forEach(item => {
@@ -189,15 +199,28 @@ router.get('/items-with-offers', [
     });
   });
 
-  const items = await FoodItem.find({
-    _id: { $in: Array.from(itemIds) },
-    isActive: true
-  }).populate('category', 'name icon');
+  console.log('🔍 [BACKEND] Unique item IDs with offers:', Array.from(itemIds));
+
+  // ✅ FIX: Remove or modify the isActive filter for offer items
+  let itemQuery = {
+    _id: { $in: Array.from(itemIds) }
+  };
+  
+  // Only filter by isActive if explicitly requested to exclude unavailable
+  if (includeUnavailable !== 'true') {
+    itemQuery.isActive = true;
+  }
+
+  const items = await FoodItem.find(itemQuery).populate('category', 'name icon');
+
+  console.log('🔍 [BACKEND] Found food items (after filter):', items.length);
 
   const itemsWithOffers = items.map(item => {
     const itemOffers = activeOffers.filter(offer =>
       offer.appliedToItems.some(oi => oi._id.toString() === item._id.toString())
     );
+
+    console.log('🔍 [BACKEND] Item:', item.name, 'Active:', item.isActive, 'Availability:', item.availabilityStatus, 'Offers:', itemOffers.length);
 
     let bestOffer = null;
     let bestDiscountedPrice = item.price;
@@ -213,7 +236,7 @@ router.get('/items-with-offers', [
           title: offer.title,
           type: offer.type,
           value: offer.value,
-          badge: offer.discountDisplay,
+          badge: getDiscountDisplay(offer),
           platforms: offer.platforms
         };
         bestDiscountedPrice = discountedPrice;
@@ -230,10 +253,13 @@ router.get('/items-with-offers', [
     };
   });
 
+  console.log('🔍 [BACKEND] Final items with offers:', itemsWithOffers.length);
+
   res.json({
     success: true,
     count: itemsWithOffers.length,
     platform: platform || 'all',
+    includeUnavailable: includeUnavailable === 'true',
     items: itemsWithOffers
   });
 }));
