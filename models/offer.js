@@ -58,7 +58,7 @@ const offerSchema = new mongoose.Schema({
   },
   usageLimit: {
     type: Number,
-    default: null // null means unlimited
+    default: null
   },
   usageCount: {
     type: Number,
@@ -66,7 +66,7 @@ const offerSchema = new mongoose.Schema({
   },
   userUsageLimit: {
     type: Number,
-    default: 1 // How many times a single user can use this offer
+    default: 1
   },
   appliedToCategories: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -83,6 +83,12 @@ const offerSchema = new mongoose.Schema({
   deliveryTypes: [{
     type: String,
     enum: ['delivery', 'pickup']
+  }],
+  // NEW: Platform filtering
+  platforms: [{
+    type: String,
+    enum: ['mobile', 'web', 'all'],
+    default: ['all']
   }],
   branches: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -101,25 +107,25 @@ const offerSchema = new mongoose.Schema({
     default: false
   },
   comboItems: [{
-  foodItem: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'FoodItem',
-    required: true
-  },
-  quantity: {
+    foodItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'FoodItem',
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+      default: 1
+    }
+  }],
+  comboPrice: {
     type: Number,
-    required: true,
-    min: 1,
-    default: 1
-  }
-}],
-comboPrice: {
-  type: Number,
-  required: function() {
-    return this.type === 'combo';
+    required: function() {
+      return this.type === 'combo';
+    },
+    min: [0, 'Combo price cannot be negative']
   },
-  min: [0, 'Combo price cannot be negative']
-},
   startDate: {
     type: Date,
     required: true,
@@ -137,7 +143,7 @@ comboPrice: {
   },
   priority: {
     type: Number,
-    default: 1, // Higher number = higher priority
+    default: 1,
     min: 1,
     max: 10
   },
@@ -145,21 +151,25 @@ comboPrice: {
     type: String,
     trim: true
   }],
-usageHistory: [{
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  order: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Order'
-  },
-  discountAmount: Number,
-  usedAt: {
-    type: Date,
-    default: Date.now
-  }
-}, { default: [] }]
+  usageHistory: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Order'
+    },
+    discountAmount: Number,
+    platform: {
+      type: String,
+      enum: ['mobile', 'web']
+    },
+    usedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }, { default: [] }]
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -205,12 +215,19 @@ offerSchema.index({ couponCode: 1 });
 offerSchema.index({ startDate: 1, endDate: 1 });
 offerSchema.index({ isFeatured: 1, priority: -1 });
 offerSchema.index({ type: 1 });
+offerSchema.index({ platforms: 1 }); // NEW: Index for platform filtering
+
+// Method to check if offer is valid for platform
+offerSchema.methods.isValidForPlatform = function(platform) {
+  if (!platform) return true;
+  if (!this.platforms || this.platforms.length === 0) return true;
+  return this.platforms.includes('all') || this.platforms.includes(platform);
+};
 
 // Method to check if user can use this offer
 offerSchema.methods.canUserUse = function(userId) {
   if (!this.isValid) return false;
   
-  // Ensure usageHistory is an array; default to empty array if undefined or null
   const usageHistory = Array.isArray(this.usageHistory) ? this.usageHistory : [];
   
   const userUsage = usageHistory.filter(usage => 
@@ -224,12 +241,10 @@ offerSchema.methods.canUserUse = function(userId) {
 offerSchema.methods.calculateDiscount = function(orderDetails) {
   const { subtotal, items, deliveryType } = orderDetails;
   
-  // Check minimum order amount
   if (subtotal < this.minOrderAmount) {
     return { valid: false, reason: `Minimum order amount is $${this.minOrderAmount}` };
   }
   
-  // Check delivery type restriction
   if (this.deliveryTypes.length > 0 && !this.deliveryTypes.includes(deliveryType)) {
     return { valid: false, reason: 'Offer not valid for this delivery type' };
   }
@@ -249,12 +264,10 @@ offerSchema.methods.calculateDiscount = function(orderDetails) {
       break;
       
     case 'free-delivery':
-      // This would be handled in order calculation
-      discount = 2.99; // Assuming delivery fee is $2.99
+      discount = 2.99;
       break;
       
     case 'buy-one-get-one':
-      // Simplified BOGO logic
       if (this.appliedToItems.length > 0) {
         const eligibleItems = items.filter(item => 
           this.appliedToItems.some(offerId => 
@@ -276,12 +289,13 @@ offerSchema.methods.calculateDiscount = function(orderDetails) {
   };
 };
 
-// Method to apply offer to user
-offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount) {
+// Method to apply offer to user with platform tracking
+offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount, platform) {
   this.usageHistory.push({
     user: userId,
     order: orderId,
     discountAmount,
+    platform: platform || 'web',
     usedAt: new Date()
   });
   
@@ -289,11 +303,11 @@ offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount
   return this.save();
 };
 
-// Static method to find valid offers for user
-offerSchema.statics.findValidOffersForUser = function(userId, orderDetails) {
+// Static method to find valid offers for user with platform filter
+offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, platform) {
   const now = new Date();
   
-  return this.find({
+  let query = {
     isActive: true,
     startDate: { $lte: now },
     endDate: { $gte: now },
@@ -301,19 +315,47 @@ offerSchema.statics.findValidOffersForUser = function(userId, orderDetails) {
       { usageLimit: null },
       { $expr: { $lt: ['$usageCount', '$usageLimit'] } }
     ]
-  })
-  .populate('appliedToCategories appliedToItems excludedItems')
-  .sort({ priority: -1, createdAt: -1 });
+  };
+
+  // Add platform filter
+  if (platform && platform !== 'all') {
+    query.$and = [
+      {
+        $or: [
+          { platforms: { $in: ['all'] } },
+          { platforms: { $in: [platform] } },
+          { platforms: { $exists: false } },
+          { platforms: { $size: 0 } }
+        ]
+      }
+    ];
+  }
+  
+  return this.find(query)
+    .populate('appliedToCategories appliedToItems excludedItems')
+    .sort({ priority: -1, createdAt: -1 });
 };
 
 // Static method to find offer by coupon code
-offerSchema.statics.findByCouponCode = function(code) {
-  return this.findOne({
+offerSchema.statics.findByCouponCode = function(code, platform) {
+  let query = {
     couponCode: code.toUpperCase(),
     isActive: true,
     startDate: { $lte: new Date() },
     endDate: { $gte: new Date() }
-  });
+  };
+
+  // Add platform filter
+  if (platform && platform !== 'all') {
+    query.$or = [
+      { platforms: { $in: ['all'] } },
+      { platforms: { $in: [platform] } },
+      { platforms: { $exists: false } },
+      { platforms: { $size: 0 } }
+    ];
+  }
+
+  return this.findOne(query);
 };
 
 module.exports = mongoose.model('Offer', offerSchema);

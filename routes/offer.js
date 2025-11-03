@@ -8,12 +8,13 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-// @desc    Get all active offers with applied items
+// @desc    Get all active offers with platform filter
 // @route   GET /api/v1/offers
 // @access  Public
 router.get('/', [
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
   query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
+  query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50')
 ], optionalAuth, asyncHandler(async (req, res) => {
@@ -29,6 +30,7 @@ router.get('/', [
   const {
     featured,
     type,
+    platform,
     page = 1,
     limit = 20
   } = req.query;
@@ -44,6 +46,16 @@ router.get('/', [
 
   if (featured !== undefined) query.isFeatured = featured === 'true';
   if (type) query.type = type;
+
+  // Add platform filter
+  if (platform && platform !== 'all') {
+    query.$or = [
+      { platforms: { $in: ['all'] } },
+      { platforms: { $in: [platform] } },
+      { platforms: { $exists: false } },
+      { platforms: { $size: 0 } }
+    ];
+  }
 
   const offers = await Offer.find(query)
     .populate({
@@ -96,6 +108,7 @@ router.get('/', [
     totalOffers,
     totalPages,
     currentPage: parseInt(page),
+    platform: platform || 'all',
     offers: offersWithPrices
   });
 }));
@@ -120,7 +133,6 @@ function calculateItemDiscount(originalPrice, offer) {
       break;
       
     case 'buy-one-get-one':
-      // For BOGO, return half price (assuming quantity of 2)
       discountedPrice = originalPrice / 2;
       break;
   }
@@ -128,21 +140,34 @@ function calculateItemDiscount(originalPrice, offer) {
   return Math.round(discountedPrice * 100) / 100;
 }
 
-// @desc    Get food items with active offers
+// @desc    Get food items with active offers (platform-specific)
 // @route   GET /api/v1/offers/items-with-offers
 // @access  Public
-router.get('/items-with-offers', asyncHandler(async (req, res) => {
+router.get('/items-with-offers', [
+  query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all')
+], asyncHandler(async (req, res) => {
+  const { platform } = req.query;
   const now = new Date();
 
-  // Find all active offers
-  const activeOffers = await Offer.find({
+  let offerQuery = {
     isActive: true,
     startDate: { $lte: now },
     endDate: { $gte: now },
     appliedToItems: { $exists: true, $ne: [] }
-  }).populate('appliedToItems');
+  };
 
-  // Get unique food items from all offers
+  // Add platform filter
+  if (platform && platform !== 'all') {
+    offerQuery.$or = [
+      { platforms: { $in: ['all'] } },
+      { platforms: { $in: [platform] } },
+      { platforms: { $exists: false } },
+      { platforms: { $size: 0 } }
+    ];
+  }
+
+  const activeOffers = await Offer.find(offerQuery).populate('appliedToItems');
+
   const itemIds = new Set();
   activeOffers.forEach(offer => {
     offer.appliedToItems.forEach(item => {
@@ -150,19 +175,16 @@ router.get('/items-with-offers', asyncHandler(async (req, res) => {
     });
   });
 
-  // Fetch full item details
   const items = await FoodItem.find({
     _id: { $in: Array.from(itemIds) },
     isActive: true
   }).populate('category', 'name icon');
 
-  // Attach best offer to each item
   const itemsWithOffers = items.map(item => {
     const itemOffers = activeOffers.filter(offer =>
       offer.appliedToItems.some(oi => oi._id.toString() === item._id.toString())
     );
 
-    // Find best offer (highest discount)
     let bestOffer = null;
     let bestDiscountedPrice = item.price;
     let bestSavings = 0;
@@ -177,7 +199,8 @@ router.get('/items-with-offers', asyncHandler(async (req, res) => {
           title: offer.title,
           type: offer.type,
           value: offer.value,
-          badge: offer.discountDisplay
+          badge: offer.discountDisplay,
+          platforms: offer.platforms
         };
         bestDiscountedPrice = discountedPrice;
         bestSavings = savings;
@@ -196,15 +219,16 @@ router.get('/items-with-offers', asyncHandler(async (req, res) => {
   res.json({
     success: true,
     count: itemsWithOffers.length,
+    platform: platform || 'all',
     items: itemsWithOffers
   });
 }));
 
 // @desc    Apply offer to food items
 // @route   POST /api/v1/offers/:id/apply-to-items
-// @access  Private (Admin/Manager only)
+// @access  Private (Admin only)
 router.post('/:id/apply-to-items', [
- auth,
+  auth,
   authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('itemIds').isArray({ min: 1 }).withMessage('Item IDs array is required'),
@@ -229,7 +253,6 @@ router.post('/:id/apply-to-items', [
     });
   }
 
-  // Verify all items exist and are active
   const items = await FoodItem.find({
     _id: { $in: itemIds },
     isActive: true
@@ -242,11 +265,9 @@ router.post('/:id/apply-to-items', [
     });
   }
 
-  // Update offer with items
   offer.appliedToItems = itemIds;
   await offer.save();
 
-  // Populate items for response
   await offer.populate({
     path: 'appliedToItems',
     select: 'name imageUrl price category',
@@ -262,7 +283,7 @@ router.post('/:id/apply-to-items', [
 
 // @desc    Remove offer from food items
 // @route   DELETE /api/v1/offers/:id/remove-from-items
-// @access  Private (Admin/Manager only)
+// @access  Private (Admin only)
 router.delete('/:id/remove-from-items', [
   auth,
   authorize('admin'),
@@ -289,7 +310,6 @@ router.delete('/:id/remove-from-items', [
     });
   }
 
-  // Remove specified items from offer
   offer.appliedToItems = offer.appliedToItems.filter(
     item => !itemIds.includes(item.toString())
   );
@@ -303,19 +323,21 @@ router.delete('/:id/remove-from-items', [
   });
 }));
 
-// @desc    Create offer with items (Admin/Manager only)
+// @desc    Create offer with items and platform support
 // @route   POST /api/v1/offers
-// @access  Private (Admin/Manager only)
+// @access  Private (Admin only)
 router.post('/', [
   auth,
   authorize('admin'),
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
   body('imageUrl').optional().isURL().withMessage('Valid image URL required'),
-body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
+  body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
   body('startDate').isISO8601().withMessage('Valid start date is required'),
   body('endDate').isISO8601().withMessage('Valid end date is required'),
   body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
+  body('platforms').optional().isArray().withMessage('Platforms must be an array'),
+  body('platforms.*').optional().isIn(['mobile', 'web', 'all']).withMessage('Invalid platform value'),
   body('appliedToItems').optional().isArray().withMessage('Applied items must be an array'),
   body('appliedToItems.*').optional().isMongoId().withMessage('Invalid item ID')
 ], asyncHandler(async (req, res) => {
@@ -326,6 +348,11 @@ body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delive
       message: 'Validation failed',
       errors: errors.array()
     });
+  }
+
+  // Set default platform if not provided
+  if (!req.body.platforms || req.body.platforms.length === 0) {
+    req.body.platforms = ['all'];
   }
 
   // Verify items exist if provided
@@ -357,12 +384,13 @@ body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delive
     offer
   });
 }));
+
 // @desc    Get single offer by ID
-// @route   GET /api/v1/offer/:id
+// @route   GET /api/v1/offers/:id
 // @access  Public
 router.get('/:id', [
   param('id').isMongoId().withMessage('Invalid offer ID')
-],  asyncHandler(async (req, res) => {
+], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -401,10 +429,10 @@ router.get('/:id', [
 }));
 
 // @desc    Update offer
-// @route   PUT /api/v1/offer/:id
-// @access  Private (Admin/Manager only)
+// @route   PUT /api/v1/offers/:id
+// @access  Private (Admin only)
 router.put('/:id', [
- auth,
+  auth,
   authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('title').optional().trim().notEmpty().withMessage('Title cannot be empty'),
@@ -414,7 +442,8 @@ router.put('/:id', [
   body('startDate').optional().isISO8601().withMessage('Valid start date is required'),
   body('endDate').optional().isISO8601().withMessage('Valid end date is required'),
   body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
-  body('comboPrice').optional().isFloat({ min: 0 }).withMessage('Combo price must be non-negative'),
+  body('platforms').optional().isArray().withMessage('Platforms must be an array'),
+  body('platforms.*').optional().isIn(['mobile', 'web', 'all']).withMessage('Invalid platform value'),
   body('appliedToItems').optional().isArray().withMessage('Applied items must be an array'),
   body('comboItems').optional().isArray().withMessage('Combo items must be an array')
 ], asyncHandler(async (req, res) => {
@@ -466,7 +495,6 @@ router.put('/:id', [
     }
   }
 
-  // Update offer
   Object.keys(req.body).forEach(key => {
     offer[key] = req.body[key];
   });
@@ -493,11 +521,11 @@ router.put('/:id', [
 }));
 
 // @desc    Delete offer
-// @route   DELETE /api/v1/offer/:id
-// @access  Private (Admin/Manager only)
+// @route   DELETE /api/v1/offers/:id
+// @access  Private (Admin only)
 router.delete('/:id', [
   auth,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
