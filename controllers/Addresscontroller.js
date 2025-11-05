@@ -3,9 +3,9 @@ const { validateCoordinates, calculateDistance } = require('../utils/locationUti
 const fetch = require('node-fetch');
 
 // Shop coordinates
-const SHOP_LAT =41.403661;
-const SHOP_LNG = 2.198579;
-const MAX_DELIVERY_DISTANCE = 6; // km
+const SHOP_LAT =41.4036344;
+const SHOP_LNG = 2.1986439;
+const MAX_DELIVERY_DISTANCE = 3.5; // km
 
 // Get all saved addresses for user
 exports.getSavedAddresses = async (req, res) => {
