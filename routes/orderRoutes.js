@@ -10,6 +10,24 @@ const asyncHandler = require('../middleware/asyncHandler');
 const Branch =require('../models/Branch');
 const router = express.Router();
 const { sendOrderStatusNotification, sendNewOrderNotification } = require('../utils/notificationService');
+const {
+  sendNotificationToDevice,
+} = require("../utils/firebaseAdmin");
+
+router.get("/test-notify", async (req, res) => {
+  try {
+    const response = await sendNotificationToDevice(
+      "eAgCCEVH0tFzKdq-G0Loq1:APA91bHurIX4PIfjmGIbaZqcqtzTNCb8PGGXB2qfZNZi8KImTY4ypMs5DV_4pBBUpSZrjowF6hEMDGPxMzDjEOQIlBjYJ84q-6BtY7wTa-DKpzSZDq8nkms",
+      "Server Test",
+      "Your notification system works!"
+      
+    );
+    res.json(response);
+  } catch (error) {
+    console.error("Notification Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // @desc    Create new order
 // @route   POST /api/v1/orders
@@ -488,6 +506,7 @@ router.patch('/:id/status', [
 // @desc    Cancel order
 // @route   PATCH /api/v1/orders/:id/cancel
 // @access  Private
+
 router.patch('/:id/cancel', [
   auth,
   param('id').isMongoId().withMessage('Invalid order ID'),
