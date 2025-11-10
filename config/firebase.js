@@ -2,6 +2,8 @@ const admin = require('firebase-admin');
 require('dotenv').config();
 
 if (!admin.apps.length) {
+
+  
   try {
     const requiredVars = [
       'FIREBASE_PROJECT_ID',
