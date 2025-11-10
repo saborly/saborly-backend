@@ -10,6 +10,7 @@ const xss = require('xss');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+
 // Import middleware
 const { detectLanguage } = require('./middleware/languageMiddleware');
 const errorHandler = require('./middleware/errorHandler');
