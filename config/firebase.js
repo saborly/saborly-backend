@@ -3,36 +3,49 @@ require('dotenv').config();
 
 if (!admin.apps.length) {
   try {
-    let serviceAccount;
-
-    // Decode from Base64 (works on Vercel)
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-      console.log('📦 Decoding service account from Base64...');
-      const decoded = Buffer.from(
-        process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
-        'base64'
-      ).toString('utf-8');
-
-      serviceAccount = JSON.parse(decoded);
-      console.log('✅ Service account decoded successfully');
-      console.log('   Project ID:', serviceAccount.project_id);
-      console.log('   Client Email:', serviceAccount.client_email);
-    } else {
-      throw new Error('FIREBASE_SERVICE_ACCOUNT_BASE64 environment variable is not set');
+    const requiredVars = [
+      'FIREBASE_PROJECT_ID',
+      'FIREBASE_CLIENT_EMAIL',
+      'FIREBASE_PRIVATE_KEY'
+    ];
+    const missingVars = requiredVars.filter(v => !process.env[v]);
+    if (missingVars.length > 0) {
+      throw new Error(`Missing required env vars: ${missingVars.join(', ')}`);
     }
+
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!privateKey) throw new Error('FIREBASE_PRIVATE_KEY is not defined');
+
+    // Enhanced processing for Vercel/local consistency
+    privateKey = privateKey
+      .trim()  // Remove leading/trailing whitespace
+      .replace(/^"|"$/g, '')  // Strip wrapping quotes if any
+      .replace(/\\n/g, '\n')  // Turn literal \n into actual newlines
+      .replace(/\\\n/g, '\n');  // Handle escaped newlines (Vercel sometimes adds this)
+
+    // Validate PEM format (basic check)
+    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----') || !privateKey.includes('-----END PRIVATE KEY-----')) {
+      throw new Error('Invalid private key format: Missing PEM headers');
+    }
+
+    const serviceAccount = {
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey,
+    };
 
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
     });
 
-    console.log('🔥 Firebase Admin initialized successfully');
+    console.log('✅ Firebase Admin initialized');
   } catch (error) {
-    console.error('❌ Firebase Admin initialization failed');
-    console.error('Error message:', error.message);
+    console.error('❌ Firebase Admin init failed:', error.message);
     throw error;
   }
 } else {
-  console.log('ℹ️  Firebase Admin already initialized');
+  console.log('ℹ️ Firebase Admin already initialized');
 }
 
 module.exports = admin;
