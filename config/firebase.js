@@ -17,10 +17,17 @@ if (!admin.apps.length) {
 
     if (!privateKey) throw new Error('FIREBASE_PRIVATE_KEY is not defined');
 
-    // ✅ Works both locally (.env) and on Vercel
+    // ✅ Enhanced parsing for both local and Vercel
     privateKey = privateKey
-      .replace(/^"|"$/g, '')   // strip wrapping quotes if any
-      .replace(/\\n/g, '\n');  // turn literal \n into newlines
+      .replace(/^["']|["']$/g, '')  // Remove wrapping quotes (single or double)
+      .replace(/\\\\n/g, '\\n')     // Handle double-escaped newlines first
+      .replace(/\\n/g, '\n')        // Convert \n to actual newlines
+      .trim();                       // Remove any extra whitespace
+
+    // Validate the key format
+    if (!privateKey.includes('BEGIN PRIVATE KEY')) {
+      throw new Error('Invalid private key format');
+    }
 
     const serviceAccount = {
       projectId: process.env.FIREBASE_PROJECT_ID,
