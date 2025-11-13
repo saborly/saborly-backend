@@ -109,6 +109,41 @@ router.get('/', [
   });
 }));
 
+// routes/offers.js
+router.post('/claim-discount', [
+  body('deviceId').notEmpty(),
+  body('offerId').isMongoId(),
+], asyncHandler(async (req, res) => {
+  const { deviceId, offerId, userId } = req.body;
+  
+  // Check if device already has active discount
+  const existingClaim = await DiscountClaim.findOne({
+    deviceId,
+    isActive: true,
+    expiryDate: { $gte: new Date() }
+  });
+  
+  if (existingClaim) {
+    return res.status(400).json({
+      success: false,
+      message: 'Device already has an active discount'
+    });
+  }
+  
+  // Create new discount claim
+  const claim = await DiscountClaim.create({
+    deviceId,
+    offerId,
+    userId,
+    claimedAt: new Date(),
+    isActive: true
+  });
+  
+  res.json({
+    success: true,
+    claim
+  });
+}));
 // Helper function to generate discount display text
 function getDiscountDisplay(offer) {
   switch (offer.type) {

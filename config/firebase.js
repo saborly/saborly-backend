@@ -17,17 +17,10 @@ if (!admin.apps.length) {
 
     if (!privateKey) throw new Error('FIREBASE_PRIVATE_KEY is not defined');
 
-    // Enhanced processing for Vercel/local consistency
+    // ✅ Works both locally (.env) and on Vercel
     privateKey = privateKey
-      .trim()  // Remove leading/trailing whitespace
-      .replace(/^"|"$/g, '')  // Strip wrapping quotes if any
-      .replace(/\\n/g, '\n')  // Turn literal \n into actual newlines
-      .replace(/\\\n/g, '\n');  // Handle escaped newlines (Vercel sometimes adds this)
-
-    // Validate PEM format (basic check)
-    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----') || !privateKey.includes('-----END PRIVATE KEY-----')) {
-      throw new Error('Invalid private key format: Missing PEM headers');
-    }
+      .replace(/^"|"$/g, '')   // strip wrapping quotes if any
+      .replace(/\\n/g, '\n');  // turn literal \n into newlines
 
     const serviceAccount = {
       projectId: process.env.FIREBASE_PROJECT_ID,
