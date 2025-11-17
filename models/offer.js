@@ -68,6 +68,26 @@ const offerSchema = new mongoose.Schema({
     type: Number,
     default: 1
   },
+  // NEW: One-time offer per device restriction
+  isOneTimePerDevice: {
+    type: Boolean,
+    default: false
+  },
+  // Track devices that have claimed this offer
+  claimedDevices: [{
+    deviceId: {
+      type: String,
+      required: true
+    },
+    claimedAt: {
+      type: Date,
+      default: Date.now
+    },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  }],
   appliedToCategories: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category'
@@ -84,7 +104,6 @@ const offerSchema = new mongoose.Schema({
     type: String,
     enum: ['delivery', 'pickup']
   }],
-  // NEW: Platform filtering
   platforms: [{
     type: String,
     enum: ['mobile', 'web', 'all'],
@@ -160,6 +179,7 @@ const offerSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Order'
     },
+    deviceId: String,
     discountAmount: Number,
     platform: {
       type: String,
@@ -215,7 +235,33 @@ offerSchema.index({ couponCode: 1 });
 offerSchema.index({ startDate: 1, endDate: 1 });
 offerSchema.index({ isFeatured: 1, priority: -1 });
 offerSchema.index({ type: 1 });
-offerSchema.index({ platforms: 1 }); // NEW: Index for platform filtering
+offerSchema.index({ platforms: 1 });
+offerSchema.index({ 'claimedDevices.deviceId': 1 }); // NEW: Index for device lookups
+offerSchema.index({ isOneTimePerDevice: 1 });
+
+// Method to check if device has already claimed this offer
+offerSchema.methods.hasDeviceClaimed = function(deviceId) {
+  if (!this.isOneTimePerDevice) return false;
+  return this.claimedDevices.some(claim => claim.deviceId === deviceId);
+};
+
+// Method to mark device as claimed
+offerSchema.methods.claimByDevice = function(deviceId, userId = null) {
+  if (!this.isOneTimePerDevice) return this;
+  
+  // Check if already claimed
+  if (this.hasDeviceClaimed(deviceId)) {
+    throw new Error('This device has already claimed this offer');
+  }
+  
+  this.claimedDevices.push({
+    deviceId,
+    userId,
+    claimedAt: new Date()
+  });
+  
+  return this.save();
+};
 
 // Method to check if offer is valid for platform
 offerSchema.methods.isValidForPlatform = function(platform) {
@@ -225,8 +271,13 @@ offerSchema.methods.isValidForPlatform = function(platform) {
 };
 
 // Method to check if user can use this offer
-offerSchema.methods.canUserUse = function(userId) {
+offerSchema.methods.canUserUse = function(userId, deviceId = null) {
   if (!this.isValid) return false;
+  
+  // Check device restriction
+  if (this.isOneTimePerDevice && deviceId && this.hasDeviceClaimed(deviceId)) {
+    return false;
+  }
   
   const usageHistory = Array.isArray(this.usageHistory) ? this.usageHistory : [];
   
@@ -289,22 +340,33 @@ offerSchema.methods.calculateDiscount = function(orderDetails) {
   };
 };
 
-// Method to apply offer to user with platform tracking
-offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount, platform) {
+// Method to apply offer to user with platform and device tracking
+offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount, platform, deviceId = null) {
   this.usageHistory.push({
     user: userId,
     order: orderId,
+    deviceId,
     discountAmount,
     platform: platform || 'web',
     usedAt: new Date()
   });
   
   this.usageCount += 1;
+  
+  // Mark device as claimed if one-time offer
+  if (this.isOneTimePerDevice && deviceId && !this.hasDeviceClaimed(deviceId)) {
+    this.claimedDevices.push({
+      deviceId,
+      userId,
+      claimedAt: new Date()
+    });
+  }
+  
   return this.save();
 };
 
-// Static method to find valid offers for user with platform filter
-offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, platform) {
+// Static method to find valid offers for user with platform and device filter
+offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, platform, deviceId = null) {
   const now = new Date();
   
   let query = {
@@ -333,11 +395,23 @@ offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, plat
   
   return this.find(query)
     .populate('appliedToCategories appliedToItems excludedItems')
-    .sort({ priority: -1, createdAt: -1 });
+    .sort({ priority: -1, createdAt: -1 })
+    .then(offers => {
+      // Filter out offers where device has already claimed (if one-time per device)
+      if (deviceId) {
+        return offers.filter(offer => {
+          if (offer.isOneTimePerDevice) {
+            return !offer.hasDeviceClaimed(deviceId);
+          }
+          return true;
+        });
+      }
+      return offers;
+    });
 };
 
-// Static method to find offer by coupon code
-offerSchema.statics.findByCouponCode = function(code, platform) {
+// Static method to find offer by coupon code with device check
+offerSchema.statics.findByCouponCode = function(code, platform, deviceId = null) {
   let query = {
     couponCode: code.toUpperCase(),
     isActive: true,
@@ -355,7 +429,16 @@ offerSchema.statics.findByCouponCode = function(code, platform) {
     ];
   }
 
-  return this.findOne(query);
+  return this.findOne(query).then(offer => {
+    if (!offer) return null;
+    
+    // Check device restriction
+    if (offer.isOneTimePerDevice && deviceId && offer.hasDeviceClaimed(deviceId)) {
+      throw new Error('This device has already claimed this offer');
+    }
+    
+    return offer;
+  });
 };
 
 module.exports = mongoose.model('Offer', offerSchema);
