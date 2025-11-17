@@ -514,49 +514,53 @@ router.patch('/:id/cancel', [
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
+    return res.status(400).json({ success: false, errors: errors.array() });
   }
 
   const { reason } = req.body;
-
   const order = await Order.findById(req.params.id);
 
   if (!order) {
-    return res.status(404).json({
-      success: false,
-      message: 'Order not found'
-    });
+    return res.status(404).json({ success: false, message: 'Order not found' });
   }
 
-  // Check if user owns this order or is admin/manager
-  if (order.userId.toString() !== req.user.id && !['admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      message: 'Not authorized to cancel this order'
-    });
+  // Authorization
+  const isOwner = order.userId.toString() === req.user.id;
+  const isAdmin = ['admin', 'manager', 'superadmin'].includes(req.user.role);
+  if (!isOwner && !isAdmin) {
+    return res.status(403).json({ success: false, message: 'Not authorized' });
   }
 
-  // Check if order can be cancelled
   if (['delivered', 'cancelled', 'refunded'].includes(order.status)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Order cannot be cancelled'
-    });
+    return res.status(400).json({ success: false, message: 'Order cannot be cancelled' });
   }
 
-  const cancelledBy = req.user.role === 'admin' || req.user.role === 'manager' ? 'admin' : 'customer';
-  await order.cancelOrder(reason, cancelledBy);
+  const cancelledBy = isAdmin ? 'admin' : 'customer';
 
-  // Restore stock for cancelled items
+  // Apply cancellation logic (no save yet)
+  order.cancelOrder(reason, cancelledBy);
+
+  // Restore stock
   for (const item of order.items) {
     const foodItem = await FoodItem.findById(item.foodItem);
     if (foodItem) {
       await foodItem.updateStock(item.quantity, 'add');
     }
+  }
+
+  // SINGLE SAVE — ONLY HERE!
+  await order.save();
+
+  // Send notification
+  try {
+    await sendOrderStatusNotification(
+      order.userId.toString(),
+      order,
+      'cancelled',
+      { title: 'Order Cancelled', body: reason }
+    );
+  } catch (err) {
+    console.error('Notification failed:', err);
   }
 
   res.json({

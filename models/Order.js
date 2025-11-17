@@ -286,17 +286,21 @@ orderSchema.virtual('estimatedTimeRemaining').get(function() {
 orderSchema.methods.addTrackingUpdate = function(status, message, location) {
   this.trackingUpdates.push({
     status,
-    message,
+    message: message || `Status updated to ${status}`,
     location,
     timestamp: new Date()
   });
-  
-  // Update main status if provided
+
+  // Only update status if provided
   if (status) {
     this.status = status;
   }
-  
-  return this.save();
+
+  // Mark array as modified (important!)
+  this.markModified('trackingUpdates');
+
+  // DO NOT CALL this.save() HERE!
+  return this; // return the document for chaining
 };
 
 // Method to update payment status
@@ -328,10 +332,12 @@ orderSchema.methods.cancelOrder = function(reason, cancelledBy = 'customer') {
     cancelledBy,
     cancelledAt: new Date()
   };
-  
-  this.addTrackingUpdate('cancelled', `Order cancelled: ${reason}`);
-  
-  return this.save();
+
+  // Just add tracking — no save!
+  this.addTrackingUpdate('cancelled', `Order cancelled by ${cancelledBy}: ${reason}`);
+
+  // DO NOT SAVE HERE EITHER
+  return this;
 };
 
 // Method to process refund
