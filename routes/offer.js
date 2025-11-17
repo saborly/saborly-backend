@@ -378,6 +378,133 @@ function calculateItemDiscount(originalPrice, offer) {
   
   return Math.round(discountedPrice * 100) / 100;
 }
+router.get('/device-claims', [
+  query('deviceId').notEmpty().withMessage('Device ID is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { deviceId } = req.query;
+
+  try {
+    // Find all offers where this device has claimed
+    const offers = await Offer.find({
+      'claimedDevices.deviceId': deviceId
+    }).select('_id title type claimedDevices');
+
+    // Extract claim info for this device
+    const claimedOffers = offers.map(offer => {
+      const deviceClaim = offer.claimedDevices.find(
+        claim => claim.deviceId === deviceId
+      );
+
+      return {
+        offerId: offer._id,
+        offerTitle: offer.title,
+        offerType: offer.type,
+        claimedAt: deviceClaim?.claimedAt,
+        userId: deviceClaim?.userId
+      };
+    });
+
+    res.json({
+      success: true,
+      count: claimedOffers.length,
+      deviceId,
+      claimedOffers
+    });
+  } catch (error) {
+    console.error('Error fetching device claims:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch device claims',
+      error: error.message
+    });
+  }
+}));
+
+// @desc    Claim offer and record usage in order
+// @route   POST /api/v1/offer/:id/claim-with-order
+// @access  Private
+router.post('/:id/claim-with-order', [
+  auth,
+  param('id').isMongoId().withMessage('Invalid offer ID'),
+  body('deviceId').notEmpty().withMessage('Device ID is required'),
+  body('orderId').isMongoId().withMessage('Invalid order ID')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { deviceId, orderId } = req.body;
+  const offer = await Offer.findById(req.params.id);
+
+  if (!offer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Offer not found'
+    });
+  }
+
+  if (!offer.isOneTimePerDevice) {
+    return res.status(400).json({
+      success: false,
+      message: 'This offer is not a one-time per device offer'
+    });
+  }
+
+  if (offer.hasDeviceClaimed(deviceId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'This device has already claimed this offer'
+    });
+  }
+
+  try {
+    // Mark device as claimed
+    await offer.claimByDevice(deviceId, req.user.id);
+
+    // Add to usage history
+    offer.usageHistory.push({
+      user: req.user.id,
+      order: orderId,
+      deviceId,
+      discountAmount: 0, // Will be calculated from order
+      platform: req.body.platform || 'mobile',
+      usedAt: new Date()
+    });
+
+    await offer.save();
+
+    res.json({
+      success: true,
+      message: 'Offer claimed successfully',
+      offer: {
+        id: offer._id,
+        title: offer.title,
+        claimedAt: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error claiming offer:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to claim offer',
+      error: error.message
+    });
+  }
+}));
 
 // @desc    Create offer with device restriction support
 // @route   POST /api/v1/offers
