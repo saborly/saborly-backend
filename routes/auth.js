@@ -359,13 +359,10 @@ router.post('/google-signin', [
         }
       });
     } else {
-      // User doesn't exist - create new account
       
-      // Generate a random phone number placeholder or leave empty
       const phone = ''; // You might want to prompt user to add phone later
       
-      // Create user (no password needed for Google sign-in)
-      // Generate a secure random password that user won't know/use
+      
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
       
       user = await User.create({
@@ -714,6 +711,8 @@ router.post('/verify-reset-otp', [
 
   const { email, otp } = req.body;
 
+
+
   const user = await User.findOne({ email });
 
   if (!user) {
@@ -722,6 +721,10 @@ router.post('/verify-reset-otp', [
       message: 'User not found'
     });
   }
+
+
+
+  
 
   const isValidOTP = user.verifyPasswordResetOTP(otp);
 
