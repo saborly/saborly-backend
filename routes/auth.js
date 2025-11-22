@@ -6,9 +6,12 @@ const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
-  const { sendNotificationToDevice } = require('../utils/firebaseAdmin');
 const { OAuth2Client } = require('google-auth-library');
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// ✅ CRITICAL FIX: Use the WEB CLIENT ID for token verification
+// This is the serverClientId used in your Flutter app
+const client = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID || process.env.GOOGLE_CLIENT_ID);
+
 const router = express.Router();
 
 // Temporary storage for pending registrations (in production, use Redis)
@@ -297,20 +300,33 @@ router.post('/google-signin', [
   const { idToken } = req.body;
 
   try {
-    // Verify the Google ID token
+    console.log('🔍 Verifying Google ID token...');
+    
+    // ✅ CRITICAL FIX: Verify against the WEB CLIENT ID
+    // The ID token from mobile apps with serverClientId will have the web client ID as audience
     const ticket = await client.verifyIdToken({
       idToken: idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: [
+        process.env.GOOGLE_WEB_CLIENT_ID,           // Web client ID (primary)
+        process.env.GOOGLE_ANDROID_CLIENT_ID,       // Android client ID (fallback)
+        process.env.GOOGLE_IOS_CLIENT_ID,           // iOS client ID (fallback)
+        process.env.GOOGLE_CLIENT_ID                // Legacy/default (fallback)
+      ].filter(Boolean), // Remove undefined values
     });
 
     const payload = ticket.getPayload();
     
     if (!payload || !payload.email) {
+      console.error('❌ Invalid Google token - no payload or email');
       return res.status(400).json({
         success: false,
         message: 'Invalid Google token'
       });
     }
+
+    console.log('✅ Token verified for email:', payload.email);
+    console.log('   Audience (client ID):', payload.aud);
+    console.log('   Issuer:', payload.iss);
 
     const {
       email,
@@ -326,8 +342,8 @@ router.post('/google-signin', [
 
     if (user) {
       // User exists - log them in
+      console.log('✅ Existing user found:', email);
       
-      // Check if user is active
       if (!user.isActive) {
         return res.status(401).json({
           success: false,
@@ -359,12 +375,12 @@ router.post('/google-signin', [
         }
       });
     } else {
+      // User doesn't exist - create new account
+      console.log('✅ Creating new user:', email);
       
-      const phone = ''; // You might want to prompt user to add phone later
-      
-      
+      const phone = '';
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
-      
+
       user = await User.create({
         firstName: firstName || 'User',
         lastName: lastName || '',
@@ -373,9 +389,8 @@ router.post('/google-signin', [
         password: randomPassword,
         avatar,
         emailVerified: emailVerified || false,
-        // You might want to add a field to track OAuth provider
-        // authProvider: 'google',
-        // googleId: googleId,
+        authProvider: 'google',
+        googleId: googleId,
       });
 
       // Update last login
@@ -393,7 +408,7 @@ router.post('/google-signin', [
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
-          phone: user.phone,
+          phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
           emailVerified: user.emailVerified,
@@ -403,8 +418,9 @@ router.post('/google-signin', [
       });
     }
   } catch (error) {
-    console.error('Google Sign-In error:', error);
+    console.error('❌ Google Sign-In error:', error);
     
+    // More specific error messages
     if (error.message && error.message.includes('Token')) {
       return res.status(400).json({
         success: false,
@@ -412,13 +428,21 @@ router.post('/google-signin', [
       });
     }
     
+    if (error.message && error.message.includes('audience')) {
+      console.error('⚠️  Audience mismatch - check your Google Client IDs');
+      console.error('   Expected audience:', process.env.GOOGLE_WEB_CLIENT_ID);
+      return res.status(400).json({
+        success: false,
+        message: 'Google token audience mismatch. Please check configuration.'
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Google sign-in failed. Please try again.'
     });
   }
 }));
-
 // @desc    Login user
 // @route   POST /api/v1/auth/login
 // @access  Public
@@ -724,7 +748,7 @@ router.post('/verify-reset-otp', [
 
 
 
-  
+
 
   const isValidOTP = user.verifyPasswordResetOTP(otp);
 
@@ -918,12 +942,12 @@ router.post('/google-signin-web', [
     } else {
       // User doesn't exist - create new account
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
-      
+
       user = await User.create({
         firstName: firstName || 'User',
         lastName: lastName || '',
         email,
-        phone: '', // Explicitly set to empty string for OAuth users
+        phone: '',
         password: randomPassword,
         authProvider: 'google',
         googleId: googleId,
@@ -960,7 +984,7 @@ router.post('/google-signin-web', [
         message: 'Invalid Google access token'
       });
     }
-    
+
     return res.status(500).json({
       success: false,
       message: 'Google sign-in failed. Please try again.'
