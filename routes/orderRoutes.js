@@ -481,8 +481,10 @@ router.patch('/:id/status', [
   // Set actual delivery time if delivered
   if (status === 'delivered' && !order.actualDeliveryTime) {
     order.actualDeliveryTime = new Date();
-    await order.save();
   }
+
+  // Save the order after all updates
+  await order.save();
       const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
   await sendOrderStatusNotification(
