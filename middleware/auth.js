@@ -42,6 +42,22 @@ const auth = asyncHandler(async (req, res, next) => {
       });
     }
 
+    // Check if user has been inactive for 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    if (user.lastActivity && user.lastActivity < sevenDaysAgo) {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired due to inactivity. Please login again.'
+      });
+    }
+
+    // Update last activity (async, don't wait for it)
+    user.updateLastActivity().catch(err => {
+      console.error('Error updating last activity:', err);
+    });
+
     req.user = user;
     next();
   } catch (error) {
@@ -79,7 +95,17 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
       const user = await User.findById(decoded.id);
       
       if (user && user.isActive) {
-        req.user = user;
+        // Check inactivity for optional auth too
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        if (!user.lastActivity || user.lastActivity >= sevenDaysAgo) {
+          req.user = user;
+          // Update last activity (async, don't wait for it)
+          user.updateLastActivity().catch(err => {
+            console.error('Error updating last activity:', err);
+          });
+        }
       }
     } catch (error) {
       // If token is invalid, just continue without user

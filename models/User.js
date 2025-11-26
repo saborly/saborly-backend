@@ -124,6 +124,10 @@ phone: {
     }
   },
   lastLogin: Date,
+  lastActivity: {
+    type: Date,
+    default: Date.now
+  },
   resetPasswordToken: String,
   resetPasswordExpire: Date,
   emailOTP: String,
@@ -246,6 +250,13 @@ userSchema.methods.generatePasswordResetToken = function() {
 // Update last login
 userSchema.methods.updateLastLogin = function() {
   this.lastLogin = new Date();
+  this.lastActivity = new Date();
+  return this.save({ validateBeforeSave: false });
+};
+
+// Update last activity
+userSchema.methods.updateLastActivity = function() {
+  this.lastActivity = new Date();
   return this.save({ validateBeforeSave: false });
 };
 
