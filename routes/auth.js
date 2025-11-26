@@ -1,8 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
+const Order = require('../models/Order');
+const Address = require('../models/Address');
+const Offer = require('../models/offer');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
@@ -664,7 +668,8 @@ router.post('/logout', auth, asyncHandler(async (req, res) => {
 router.delete('/account', auth, asyncHandler(async (req, res) => {
   try {
     console.log('Delete account request received for user:', req.user.id);
-    const user = await User.findById(req.user.id);
+    const userId = req.user.id;
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -673,13 +678,74 @@ router.delete('/account', auth, asyncHandler(async (req, res) => {
       });
     }
 
-    // Delete the user account
+    const userIdObject = new mongoose.Types.ObjectId(userId);
+    const cleanupResults = {
+      addresses: 0,
+      ordersAnonymized: 0,
+      offerUsageRemoved: 0,
+      reviewsAnonymized: 0
+    };
+
+    // 1. Delete all user addresses
+    const deletedAddresses = await Address.deleteMany({ userId: userIdObject });
+    cleanupResults.addresses = deletedAddresses.deletedCount;
+    console.log(`Deleted ${cleanupResults.addresses} addresses for user ${userId}`);
+
+    // 2. Anonymize orders (keep for business records but remove personal info)
+    const anonymizedOrders = await Order.updateMany(
+      { userId: userIdObject },
+      {
+        $set: {
+          'deliveryAddress.address': '[Deleted User]',
+          'deliveryAddress.apartment': '[Deleted]',
+          'deliveryAddress.instructions': '[Deleted]'
+        },
+        $unset: {
+          'deliveryAddress.latitude': '',
+          'deliveryAddress.longitude': ''
+        }
+      }
+    );
+    cleanupResults.ordersAnonymized = anonymizedOrders.modifiedCount;
+    console.log(`Anonymized ${cleanupResults.ordersAnonymized} orders for user ${userId}`);
+
+    // 3. Remove user from offer usage
+    const offersUpdated = await Offer.updateMany(
+      { 'usage.userId': userIdObject },
+      { $pull: { usage: { userId: userIdObject } } }
+    );
+    cleanupResults.offerUsageRemoved = offersUpdated.modifiedCount;
+    console.log(`Removed user from ${cleanupResults.offerUsageRemoved} offers for user ${userId}`);
+
+    // 4. Anonymize reviews in food items (remove user reviews)
+    try {
+      const FoodItem = mongoose.model('FoodItem');
+      const reviewsResult = await FoodItem.updateMany(
+        { 'reviews.user': userIdObject },
+        { $pull: { reviews: { user: userIdObject } } }
+      );
+      cleanupResults.reviewsAnonymized = reviewsResult.modifiedCount || 0;
+      console.log(`Removed ${cleanupResults.reviewsAnonymized} reviews for user ${userId}`);
+    } catch (reviewError) {
+      console.warn('Could not remove reviews (FoodItem model may not be loaded):', reviewError.message);
+      // Continue with deletion even if review removal fails
+    }
+
+    // 5. Remove FCM tokens (handled by user model methods, but ensure cleanup)
+    if (user.fcmTokens && user.fcmTokens.length > 0) {
+      user.fcmTokens = [];
+      user.fcmToken = null;
+      await user.save({ validateBeforeSave: false });
+    }
+
+    // 6. Delete the user account
     await user.deleteOne();
 
-    console.log('Account deleted successfully for user:', req.user.id);
+    console.log('Account and all related data deleted successfully for user:', userId);
     res.json({
       success: true,
-      message: 'Account deleted successfully'
+      message: 'Account and all related data deleted successfully',
+      deletedData: cleanupResults
     });
   } catch (error) {
     console.error('Delete account error:', error);
