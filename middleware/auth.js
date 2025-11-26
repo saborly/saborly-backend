@@ -59,14 +59,22 @@ const auth = asyncHandler(async (req, res, next) => {
     const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
     if (!lastActivity || (now - lastActivity) > 60000) {
       User.updateOne(
-        { _id: user._id },
+        { _id: decoded.id },
         { $set: { lastActivity: now } }
       ).catch(() => {
         // Silently fail - don't log to avoid spam
       });
     }
 
-    req.user = user;
+    // Set req.user with id property for consistency (use decoded.id from token)
+    req.user = {
+      id: decoded.id,
+      _id: user._id,
+      isActive: user.isActive,
+      lastActivity: user.lastActivity,
+      role: user.role,
+      email: user.email
+    };
     next();
   } catch (error) {
     return res.status(401).json({
