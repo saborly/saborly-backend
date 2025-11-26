@@ -278,7 +278,38 @@ router.post('/resend-registration-otp', [
 
 // Add this to your routes/auth.js file
 
+// @desc    Delete user account
+// @route   DELETE /api/v1/auth/account
+// @access  Private
+router.delete('/account', [
+  auth
+], asyncHandler(async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
 
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+
+    // Delete the user account
+    await user.deleteOne();
+
+    res.json({
+      success: true,
+      message: 'Account deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete account'
+    });
+  }
+}));
 
 // @desc    Google Sign-In
 // @route   POST /api/v1/auth/google-signin
@@ -1194,37 +1225,6 @@ router.post('/refresh-token', auth, asyncHandler(async (req, res) => {
   }
 }));
 
-// @desc    Delete user account
-// @route   DELETE /api/v1/auth/account
-// @access  Private
-router.delete('/account', [
-  auth
-], asyncHandler(async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-    
-
-    // Delete the user account
-    await user.deleteOne();
-
-    res.json({
-      success: true,
-      message: 'Account deleted successfully'
-    });
-  } catch (error) {
-    console.error('Delete account error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to delete account'
-    });
-  }
-}));
 
 module.exports = router;
