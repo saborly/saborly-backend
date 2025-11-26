@@ -1209,6 +1209,7 @@ router.delete('/account', [
         message: 'User not found'
       });
     }
+    
 
     // Delete the user account
     await user.deleteOne();
