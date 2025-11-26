@@ -137,7 +137,7 @@ const {
   // Create order with frontend-calculated totals
   const orderData = {
     orderNumber,
-    userId: req.user.id,
+    userId: req.user._id || req.user.id,
     items: processedItems,
     subtotal: clientSubtotal || calculatedSubtotal,
     deliveryFee,
@@ -423,10 +423,10 @@ router.get('/:id', [
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
-
+  const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
   
 if (
-  orderUserId !== req.user.id &&
+  orderUserId !== currentUserId &&
   !['admin', 'manager'].includes(req.user.role)
 ) {
   return res.status(403).json({
@@ -528,7 +528,8 @@ router.patch('/:id/cancel', [
   }
 
   // Authorization
-  const isOwner = order.userId.toString() === req.user.id;
+  const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
+  const isOwner = order.userId.toString() === currentUserId;
   const isAdmin = ['admin', 'manager', 'superadmin'].includes(req.user.role);
   if (!isOwner && !isAdmin) {
     return res.status(403).json({ success: false, message: 'Not authorized' });
@@ -607,7 +608,8 @@ router.post('/:id/rating', [
   }
 
   // Check if user owns this order
-  if (order.userId.toString() !== req.user.id) {
+  const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
+  if (order.userId.toString() !== currentUserId) {
     return res.status(403).json({
       success: false,
       message: 'Not authorized to rate this order'
