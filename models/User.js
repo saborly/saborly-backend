@@ -254,10 +254,19 @@ userSchema.methods.updateLastLogin = function() {
   return this.save({ validateBeforeSave: false });
 };
 
-// Update last activity
+// Update last activity (optimized - only updates if more than 1 minute has passed)
 userSchema.methods.updateLastActivity = function() {
-  this.lastActivity = new Date();
-  return this.save({ validateBeforeSave: false });
+  const now = new Date();
+  // Only update if last activity was more than 1 minute ago (reduces DB writes)
+  if (!this.lastActivity || (now - this.lastActivity) > 60000) {
+    this.lastActivity = now;
+    // Use direct update for better performance (doesn't trigger validation/save hooks)
+    return User.updateOne(
+      { _id: this._id },
+      { $set: { lastActivity: now } }
+    );
+  }
+  return Promise.resolve();
 };
 
 // Add address

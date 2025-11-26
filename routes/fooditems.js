@@ -102,13 +102,14 @@ router.get('/', [
       sortOptions = { 'rating.average': -1 };
   }
 
-  // Execute query
+  // Execute query (use lean() for better performance when not modifying documents)
   const items = await FoodItem.find(query)
     .populate('category', 'name icon imageUrl')
     .sort(sortOptions)
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-reviews');
+    .select('-reviews')
+    .lean();
 
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
@@ -230,13 +231,14 @@ router.get('/getallitems', [
       break;
   }
 
-  // Execute query
+  // Execute query (use lean() for better performance when not modifying documents)
   const items = await FoodItem.find(query)
     .populate('category', 'name icon')
     .sort(sortOptions)
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-reviews');
+    .select('-reviews')
+    .lean();
 
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);

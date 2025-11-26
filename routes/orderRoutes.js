@@ -373,7 +373,8 @@ router.get('/', [
     ])
     .sort({ createdAt: -1 })
     .limit(parseInt(limit))
-    .skip(skip);
+    .skip(skip)
+    .lean(); // Use lean() for better performance
   
 
   const totalOrders = await Order.countDocuments(query);

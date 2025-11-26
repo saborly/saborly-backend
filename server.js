@@ -75,8 +75,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// Compression middleware
-app.use(compression());
+// Compression middleware with optimized settings
+app.use(compression({
+  level: 6, // Compression level (1-9, 6 is good balance)
+  threshold: 1024, // Only compress responses > 1KB
+  filter: (req, res) => {
+    // Don't compress if client doesn't support it
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    // Use compression for all other requests
+    return compression.filter(req, res);
+  }
+}));
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
@@ -100,26 +111,66 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Cache headers middleware for GET requests
+const addCacheHeaders = (req, res, next) => {
+  if (req.method === 'GET' && !req.path.includes('/auth/')) {
+    // Cache public GET requests for 5 minutes
+    res.set('Cache-Control', 'public, max-age=300');
+  }
+  next();
+};
+
 // API Routes
 app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/categories', categoryRoutes);
-app.use('/api/v1/food-items', foodItemRoutes);
-app.use('/api/v1/orders', orderRoutes);
+app.use('/api/v1/categories', addCacheHeaders, categoryRoutes);
+app.use('/api/v1/food-items', addCacheHeaders, foodItemRoutes);
+app.use('/api/v1/orders', orderRoutes); // Don't cache orders
 app.use('/api/v1/contact', contactRoutes);
 app.use('/api/v1/addresses', addressesRoutes);
-app.use('/api/v1/banners', bannerRoutes);
-app.use('/api/v1/settings', setting);
-app.use('/api/v1/offer', offers);
+app.use('/api/v1/banners', addCacheHeaders, bannerRoutes);
+app.use('/api/v1/settings', addCacheHeaders, setting);
+app.use('/api/v1/offer', addCacheHeaders, offers);
 
-// Image proxy endpoint
+// Image proxy endpoint with caching
+const imageCache = new Map();
+const CACHE_TTL = 3600000; // 1 hour
+
 app.get('/proxy-image', async (req, res) => {
   const { url } = req.query;
+  if (!url) {
+    return res.status(400).json({ error: 'URL parameter required' });
+  }
+  
   try {
+    // Check cache first
+    const cached = imageCache.get(url);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+      res.set('Content-Type', cached.contentType);
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+      return res.send(cached.buffer);
+    }
+    
     const response = await fetch(url);
     const buffer = await response.arrayBuffer();
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
 
-    res.set('Content-Type', response.headers.get('content-type') || 'image/jpeg');
+    // Cache the image
+    imageCache.set(url, {
+      buffer: Buffer.from(buffer),
+      contentType,
+      timestamp: Date.now()
+    });
+    
+    // Limit cache size (keep last 100 images)
+    if (imageCache.size > 100) {
+      const firstKey = imageCache.keys().next().value;
+      imageCache.delete(firstKey);
+    }
+
+    res.set('Content-Type', contentType);
     res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
     res.send(Buffer.from(buffer));
   } catch (error) {
     res.status(500).json({ error: 'Image fetch failed' });
@@ -132,10 +183,22 @@ app.use(notFound);
 // Global error handler
 app.use(errorHandler);
 
-// MongoDB connection
+// MongoDB connection with optimized connection pooling
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {});
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      // Connection pool optimization
+      maxPoolSize: 10, // Maximum number of connections in the pool
+      minPoolSize: 2, // Minimum number of connections to maintain
+      maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
+      serverSelectionTimeoutMS: 5000, // Timeout for server selection
+      socketTimeoutMS: 45000, // Socket timeout
+      // Buffer commands if connection is down
+      bufferCommands: true,
+      // Retry configuration
+      retryWrites: true,
+      retryReads: true,
+    });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     await setupIndexes();
   } catch (error) {
@@ -152,6 +215,7 @@ const setupIndexes = async () => {
     // Users collection indexes
     await db.collection('users').createIndex({ email: 1 }, { unique: true });
     await db.collection('users').createIndex({ phone: 1 });
+    await db.collection('users').createIndex({ lastActivity: 1 }); // For inactivity checks
     
     // Food items collection indexes (with multilingual support)
     await db.collection('fooditems').createIndex({ 

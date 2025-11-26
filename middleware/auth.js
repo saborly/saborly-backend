@@ -24,8 +24,8 @@ const auth = asyncHandler(async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Check if user still exists
-    const user = await User.findById(decoded.id);
+    // Check if user still exists (use lean() and select only needed fields for better performance)
+    const user = await User.findById(decoded.id).select('isActive lastActivity role email').lean();
     
     if (!user) {
       return res.status(401).json({
@@ -46,17 +46,25 @@ const auth = asyncHandler(async (req, res, next) => {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
-    if (user.lastActivity && user.lastActivity < sevenDaysAgo) {
+    if (user.lastActivity && new Date(user.lastActivity) < sevenDaysAgo) {
       return res.status(401).json({
         success: false,
         message: 'Session expired due to inactivity. Please login again.'
       });
     }
 
-    // Update last activity (async, don't wait for it)
-    user.updateLastActivity().catch(err => {
-      console.error('Error updating last activity:', err);
-    });
+    // Update last activity (optimized - only updates if > 1 min since last update)
+    // Use direct updateOne for better performance (fire and forget)
+    const now = new Date();
+    const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
+    if (!lastActivity || (now - lastActivity) > 60000) {
+      User.updateOne(
+        { _id: user._id },
+        { $set: { lastActivity: now } }
+      ).catch(() => {
+        // Silently fail - don't log to avoid spam
+      });
+    }
 
     req.user = user;
     next();
@@ -92,19 +100,26 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.id);
+      const user = await User.findById(decoded.id).select('isActive lastActivity').lean();
       
       if (user && user.isActive) {
         // Check inactivity for optional auth too
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
         
-        if (!user.lastActivity || user.lastActivity >= sevenDaysAgo) {
+        if (!lastActivity || lastActivity >= sevenDaysAgo) {
           req.user = user;
-          // Update last activity (async, don't wait for it)
-          user.updateLastActivity().catch(err => {
-            console.error('Error updating last activity:', err);
-          });
+          // Update last activity (optimized - only updates if > 1 min since last update)
+          const now = new Date();
+          if (!lastActivity || (now - lastActivity) > 60000) {
+            User.updateOne(
+              { _id: user._id },
+              { $set: { lastActivity: now } }
+            ).catch(() => {
+              // Silently fail
+            });
+          }
         }
       }
     } catch (error) {
