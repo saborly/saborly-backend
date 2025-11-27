@@ -75,8 +75,7 @@ router.get('/', [
     .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-usageHistory')
-    .lean(); // Use lean() for better performance
+    .select('-usageHistory');
 
   // Filter out offers already claimed by this device (if deviceId provided)
   let filteredOffers = offers;
