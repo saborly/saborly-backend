@@ -16,7 +16,7 @@ router.use(localizeResponse);
 
 router.get('/', [
   query('page').optional().isInt({ min: 1 }),
-  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('limit').optional().isInt({ min: 1, max: 1000 }),
   query('category').optional().isMongoId(),
   query('featured').optional().isBoolean(),
   query('popular').optional().isBoolean(),
@@ -133,7 +133,7 @@ router.get('/', [
 
 router.get('/getallitems', [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
-  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('Limit must be between 1 and 1000'),
   query('category').optional().isMongoId().withMessage('Category must be a valid ID'),
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
   query('popular').optional().isBoolean().withMessage('Popular must be boolean'),
