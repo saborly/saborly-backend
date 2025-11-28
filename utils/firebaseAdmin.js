@@ -109,7 +109,7 @@ const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
       console.error('');
       console.error('Expected Client App Projects:');
       console.error('  - saborly-frontend: project "saborly-397b6" (sender: 420029681993)');
-      console.error('  - soleyadinoe: project "saborly" (sender: 361344460853)');
+      console.error('  - soleyadinoe: project "saborly-397b6" (sender: 420029681993) ✅ Updated');
       console.error('');
       console.error('SOLUTION:');
       console.error('1. Check which Firebase project your client apps are using:');
@@ -134,7 +134,7 @@ const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
           suggestion: 'Check FIREBASE_PROJECT_ID environment variable matches client app configuration',
           expectedProjects: {
             'saborly-frontend': 'saborly-397b6',
-            'soleyadinoe': 'saborly'
+            'soleyadinoe': 'saborly-397b6'
           }
         }
       };
