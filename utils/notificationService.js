@@ -63,7 +63,16 @@ const sendOrderStatusNotification = async (user, order, status, customMessage = 
       timestamp: new Date().toISOString()
     };
 
-    return await sendNotificationToDevice(fcmToken, title, body, data);
+    const result = await sendNotificationToDevice(fcmToken, title, body, data);
+    
+    // If there's a SenderId mismatch, log additional context
+    if (!result.success && result.code === 'messaging/mismatched-credential') {
+      console.error('⚠️ Notification failed due to SenderId mismatch for user:', tuser?._id);
+      console.error('   User email:', tuser?.email);
+      console.error('   This user\'s FCM token was generated with a different Firebase project');
+    }
+    
+    return result;
   } catch (error) {
     console.error('Error sending order status notification:', error);
     return { success: false, error: error.message };

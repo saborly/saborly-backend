@@ -33,6 +33,8 @@ if (!admin.apps.length) {
     });
 
     console.log('✅ Firebase Admin initialized');
+    console.log(`📋 Firebase Project ID: ${process.env.FIREBASE_PROJECT_ID}`);
+    console.log(`📧 Service Account Email: ${process.env.FIREBASE_CLIENT_EMAIL}`);
   } catch (error) {
     console.error('❌ Firebase Admin init failed:', error.message);
     throw error;
