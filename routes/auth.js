@@ -135,7 +135,16 @@ router.post('/verify-registration', [
     .withMessage('Please provide a valid email'),
   body('otp')
     .isLength({ min: 6, max: 6 })
-    .withMessage('OTP must be 6 digits')
+    .withMessage('OTP must be 6 digits'),
+  body('fcmToken')
+    .optional()
+    .trim(),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -146,7 +155,7 @@ router.post('/verify-registration', [
     });
   }
 
-  const { email, otp } = req.body;
+  const { email, otp, fcmToken, deviceId, platform } = req.body;
 
   // Get pending registration
   const pendingData = pendingRegistrations.get(email);
@@ -200,6 +209,21 @@ router.post('/verify-registration', [
 
   // Remove from pending registrations
   pendingRegistrations.delete(email);
+
+  // Update FCM token if provided
+  if (fcmToken) {
+    try {
+      await user.updateFCMToken(
+        fcmToken,
+        deviceId || 'default',
+        platform || 'android'
+      );
+      console.log('✅ FCM token saved during registration for:', email);
+    } catch (error) {
+      console.error('⚠️ Failed to save FCM token during registration:', error.message);
+      // Don't fail registration if FCM token save fails
+    }
+  }
 
   // Generate auth token
   const token = user.generateAuthToken();
@@ -288,7 +312,16 @@ router.post('/resend-registration-otp', [
 router.post('/google-signin', [
   body('idToken')
     .notEmpty()
-    .withMessage('Google ID token is required')
+    .withMessage('Google ID token is required'),
+  body('fcmToken')
+    .optional()
+    .trim(),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -299,7 +332,7 @@ router.post('/google-signin', [
     });
   }
 
-  const { idToken } = req.body;
+  const { idToken, fcmToken, deviceId, platform } = req.body;
 
   try {
     console.log('🔍 Verifying Google ID token...');
@@ -353,6 +386,21 @@ router.post('/google-signin', [
         });
       }
 
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'android'
+          );
+          console.log('✅ FCM token updated during Google sign-in for:', email);
+        } catch (error) {
+          console.error('⚠️ Failed to update FCM token during Google sign-in:', error.message);
+          // Don't fail login if FCM token update fails
+        }
+      }
+
       // Update last login
       await user.updateLastLogin();
 
@@ -394,6 +442,21 @@ router.post('/google-signin', [
         authProvider: 'google',
         googleId: googleId,
       });
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'android'
+          );
+          console.log('✅ FCM token saved during Google registration for:', email);
+        } catch (error) {
+          console.error('⚠️ Failed to save FCM token during Google registration:', error.message);
+          // Don't fail registration if FCM token save fails
+        }
+      }
 
       // Update last login
       await user.updateLastLogin();
@@ -455,7 +518,16 @@ router.post('/login', [
     .withMessage('Please provide a valid email'),
   body('password')
     .notEmpty()
-    .withMessage('Password is required')
+    .withMessage('Password is required'),
+  body('fcmToken')
+    .optional()
+    .trim(),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -466,7 +538,7 @@ router.post('/login', [
     });
   }
 
-  const { email, password } = req.body;
+  const { email, password, fcmToken, deviceId, platform } = req.body;
 
   // Find user and include password field
   const user = await User.findOne({ email }).select('+password');
@@ -494,6 +566,21 @@ router.post('/login', [
       success: false,
       message: 'Invalid credentials'
     });
+  }
+
+  // Update FCM token if provided
+  if (fcmToken) {
+    try {
+      await user.updateFCMToken(
+        fcmToken,
+        deviceId || 'default',
+        platform || 'android'
+      );
+      console.log('✅ FCM token updated during login for:', email);
+    } catch (error) {
+      console.error('⚠️ Failed to update FCM token during login:', error.message);
+      // Don't fail login if FCM token update fails
+    }
   }
 
   // Generate token
@@ -978,6 +1065,15 @@ router.post('/google-signin-web', [
   body('accessToken')
     .notEmpty()
     .withMessage('Access token is required'),
+  body('fcmToken')
+    .optional()
+    .trim(),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -988,7 +1084,7 @@ router.post('/google-signin-web', [
     });
   }
 
-  const { email, firstName, lastName, googleId, accessToken } = req.body;
+  const { email, firstName, lastName, googleId, accessToken, fcmToken, deviceId, platform } = req.body;
 
   try {
     // Verify the access token with Google
@@ -1014,6 +1110,21 @@ router.post('/google-signin-web', [
           success: false,
           message: 'Account has been deactivated. Please contact support.'
         });
+      }
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'web'
+          );
+          console.log('✅ FCM token updated during Google Web sign-in for:', email);
+        } catch (error) {
+          console.error('⚠️ Failed to update FCM token during Google Web sign-in:', error.message);
+          // Don't fail login if FCM token update fails
+        }
       }
 
       await user.updateLastLogin();
@@ -1050,6 +1161,21 @@ router.post('/google-signin-web', [
         googleId: googleId,
         emailVerified: tokenInfoResponse.data.verified_email || false,
       });
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'web'
+          );
+          console.log('✅ FCM token saved during Google Web registration for:', email);
+        } catch (error) {
+          console.error('⚠️ Failed to save FCM token during Google Web registration:', error.message);
+          // Don't fail registration if FCM token save fails
+        }
+      }
 
       await user.updateLastLogin();
       const token = user.generateAuthToken();
