@@ -197,24 +197,50 @@ const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = 
     console.log(`✅ Successfully sent ${response.successCount} notifications`);
     console.log(`❌ Failed to send ${response.failureCount} notifications`);
     
-    // Log individual failures
+    // Log individual failures with detailed error info
     if (response.failureCount > 0) {
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
-          console.error(`Failed for token ${idx}:`, resp.error);
+          const errorCode = resp.error?.code || resp.error?.errorInfo?.code;
+          const errorMessage = resp.error?.message || resp.error?.errorInfo?.message || 'Unknown error';
+          console.error(`Failed for token ${idx}:`, {
+            code: errorCode,
+            message: errorMessage,
+            token: fcmTokens[idx]?.substring(0, 20) + '...'
+          });
+          
+          // Log SenderId mismatch specifically
+          if (errorCode === 'messaging/mismatched-credential') {
+            const projectInfo = getFirebaseProjectInfo();
+            console.error(`   🚨 SenderId mismatch detected for this token`);
+            console.error(`   Backend Project: ${projectInfo.projectId}`);
+          }
         }
       });
     }
     
     return { 
-      success: true, 
+      success: response.successCount > 0, // true if at least one succeeded
       response,
       successCount: response.successCount,
       failureCount: response.failureCount
     };
   } catch (error) {
     console.error('❌ Error sending notifications:', error);
-    return { success: false, error: error.message };
+    
+    // Handle SenderId mismatch at batch level
+    if (error.code === 'messaging/mismatched-credential') {
+      const projectInfo = getFirebaseProjectInfo();
+      console.error('🚨 SENDER ID MISMATCH DETECTED for batch send!');
+      console.error('Backend Project:', projectInfo.projectId);
+      console.error('All tokens in this batch are from a different Firebase project');
+    }
+    
+    return { 
+      success: false, 
+      error: error.message,
+      code: error.code
+    };
   }
 };
 
