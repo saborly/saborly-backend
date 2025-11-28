@@ -406,6 +406,12 @@ router.get('/:id', [
     });
   }
 
+  // Query order - Mongoose should handle caching, but let's ensure fresh data
+  // First, do a quick direct check of status from DB
+  const statusCheck = await Order.findById(req.params.id).select('status updatedAt').lean();
+  console.log(`🔍 Direct DB Status Check - Status: ${statusCheck?.status}, Updated: ${statusCheck?.updatedAt}`);
+  
+  // Now get full order with population
   const order = await Order.findById(req.params.id)
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
@@ -421,8 +427,16 @@ router.get('/:id', [
     });
   }
 
-  // Log what we're returning
+  // Log what we're returning - check both status and updatedAt
   console.log(`📦 GET Order ${req.params.id} - Status: ${order.status}, Updated: ${order.updatedAt}`);
+  console.log(`🔍 GET Order Debug - Status type: ${typeof order.status}, Status value: ${JSON.stringify(order.status)}`);
+  
+  // Compare with direct check
+  if (statusCheck && statusCheck.status !== order.status) {
+    console.log(`⚠️ WARNING: Status mismatch! Direct DB: ${statusCheck.status}, Populated: ${order.status}`);
+    // Force update the order status from direct check
+    order.status = statusCheck.status;
+  }
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
