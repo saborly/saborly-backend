@@ -421,6 +421,9 @@ router.get('/:id', [
     });
   }
 
+  // Log what we're returning
+  console.log(`📦 GET Order ${req.params.id} - Status: ${order.status}, Updated: ${order.updatedAt}`);
+
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
   const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
@@ -472,6 +475,12 @@ router.patch('/:id/status', [
     });
   }
 
+  // Log the status change
+  console.log(`🔄 Updating order ${req.params.id} status: ${order.status} → ${status}`);
+
+  // Explicitly set the status FIRST
+  order.status = status;
+
   // Add tracking update
   await order.addTrackingUpdate(
     status,
@@ -486,11 +495,16 @@ router.patch('/:id/status', [
 
   // Save the order after all updates
   await order.save();
-      const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+  
+  // Refresh the order from database to ensure we have the latest data
+  const updatedOrder = await Order.findById(req.params.id);
+  console.log(`✅ Order saved - Status in DB: ${updatedOrder.status}, Updated at: ${updatedOrder.updatedAt}`);
+  
+  const orderUserId = updatedOrder.userId._id ? updatedOrder.userId._id.toString() : updatedOrder.userId.toString();
 
   await sendOrderStatusNotification(
-  orderUserId,
-    order,
+    orderUserId,
+    updatedOrder,
     status,
     message ? { title: '📦 Order Update', body: message } : null
   );
@@ -499,9 +513,9 @@ router.patch('/:id/status', [
     success: true,
     message: 'Order status updated successfully',
     order: {
-      id: order._id,
-      status: order.status,
-      estimatedTimeRemaining: order.estimatedTimeRemaining
+      id: updatedOrder._id,
+      status: updatedOrder.status,
+      estimatedTimeRemaining: updatedOrder.estimatedTimeRemaining
     }
   });
 }));
