@@ -65,11 +65,25 @@ const sendOrderStatusNotification = async (user, order, status, customMessage = 
 
     const result = await sendNotificationToDevice(fcmToken, title, body, data);
     
-    // If there's a SenderId mismatch, log additional context
+    // If there's a SenderId mismatch, remove the invalid token
     if (!result.success && result.code === 'messaging/mismatched-credential') {
       console.error('⚠️ Notification failed due to SenderId mismatch for user:', tuser?._id);
       console.error('   User email:', tuser?.email);
       console.error('   This user\'s FCM token was generated with a different Firebase project');
+      console.error('   🗑️ Removing invalid FCM token from database...');
+      
+      try {
+        // Remove the invalid token - this will force the app to generate a new one
+        tuser.fcmToken = null;
+        // Also remove from fcmTokens array if it exists there
+        if (tuser.fcmTokens && tuser.fcmTokens.length > 0) {
+          tuser.fcmTokens = tuser.fcmTokens.filter(t => t.token !== fcmToken);
+        }
+        await tuser.save({ validateBeforeSave: false });
+        console.error('   ✅ Invalid FCM token removed. User will get a new token on next app open.');
+      } catch (saveError) {
+        console.error('   ❌ Failed to remove invalid token:', saveError.message);
+      }
     }
     
     return result;
@@ -97,7 +111,47 @@ const sendNewOrderNotification = async (adminTokens, order) => {
       timestamp: new Date().toISOString()
     };
 
-    return await sendNotificationToMultipleDevices(adminTokens, title, body, data);
+    const result = await sendNotificationToMultipleDevices(adminTokens, title, body, data);
+    
+    // Handle invalid tokens from batch send
+    if (result.response && result.response.responses) {
+      const invalidTokens = [];
+      result.response.responses.forEach((resp, idx) => {
+        if (!resp.success && resp.error) {
+          const errorCode = resp.error?.code || resp.error?.errorInfo?.code;
+          if (errorCode === 'messaging/invalid-registration-token' || 
+              errorCode === 'messaging/registration-token-not-registered' ||
+              errorCode === 'messaging/mismatched-credential') {
+            invalidTokens.push(adminTokens[idx]);
+          }
+        }
+      });
+      
+      // Remove invalid tokens from admin users
+      if (invalidTokens.length > 0) {
+        console.error(`⚠️ Found ${invalidTokens.length} invalid admin FCM tokens, removing...`);
+        try {
+          await User.updateMany(
+            { 
+              role: { $in: ['admin', 'manager', 'superadmin'] },
+              $or: [
+                { fcmToken: { $in: invalidTokens } },
+                { 'fcmTokens.token': { $in: invalidTokens } }
+              ]
+            },
+            {
+              $set: { fcmToken: null },
+              $pull: { fcmTokens: { token: { $in: invalidTokens } } }
+            }
+          );
+          console.error(`   ✅ Removed ${invalidTokens.length} invalid admin FCM tokens`);
+        } catch (cleanupError) {
+          console.error('   ❌ Failed to cleanup invalid tokens:', cleanupError.message);
+        }
+      }
+    }
+    
+    return result;
   } catch (error) {
     console.error('Error sending new order notification:', error);
     return { success: false, error: error.message };
@@ -122,7 +176,29 @@ const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
       timestamp: new Date().toISOString()
     };
 
-    return await sendNotificationToDevice(deliveryAgent.fcmToken, title, body, data);
+    const result = await sendNotificationToDevice(deliveryAgent.fcmToken, title, body, data);
+    
+    // If there's a SenderId mismatch, remove the invalid token
+    if (!result.success && result.code === 'messaging/mismatched-credential') {
+      console.error('⚠️ Delivery agent notification failed due to SenderId mismatch');
+      console.error('   🗑️ Removing invalid FCM token...');
+      
+      try {
+        // If deliveryAgent is a User model instance, remove the token
+        if (deliveryAgent.fcmToken) {
+          deliveryAgent.fcmToken = null;
+          if (deliveryAgent.fcmTokens && deliveryAgent.fcmTokens.length > 0) {
+            deliveryAgent.fcmTokens = deliveryAgent.fcmTokens.filter(t => t.token !== deliveryAgent.fcmToken);
+          }
+          await deliveryAgent.save({ validateBeforeSave: false });
+          console.error('   ✅ Invalid FCM token removed.');
+        }
+      } catch (saveError) {
+        console.error('   ❌ Failed to remove invalid token:', saveError.message);
+      }
+    }
+    
+    return result;
   } catch (error) {
     console.error('Error sending delivery assignment notification:', error);
     return { success: false, error: error.message };
