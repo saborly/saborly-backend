@@ -476,13 +476,16 @@ router.patch('/:id/status', [
   }
 
   // Log the status change
-  console.log(`🔄 Updating order ${req.params.id} status: ${order.status} → ${status}`);
+  const oldStatus = order.status;
+  const oldUpdatedAt = order.updatedAt;
+  console.log(`🔄 Updating order ${req.params.id} status: ${oldStatus} → ${status}`);
+  console.log(`📅 Before save - UpdatedAt: ${oldUpdatedAt}`);
 
   // Explicitly set the status FIRST
   order.status = status;
 
   // Add tracking update
-  await order.addTrackingUpdate(
+  order.addTrackingUpdate(
     status,
     message || `Order status updated to ${status}`,
     null
@@ -493,18 +496,32 @@ router.patch('/:id/status', [
     order.actualDeliveryTime = new Date();
   }
 
+  // Mark status as modified to ensure it's saved
+  order.markModified('status');
+  
   // Save the order after all updates
-  await order.save();
+  const savedResult = await order.save();
+  console.log(`💾 Save result - Status: ${savedResult.status}, UpdatedAt: ${savedResult.updatedAt}`);
   
   // Refresh the order from database to ensure we have the latest data
-  const updatedOrder = await Order.findById(req.params.id);
-  console.log(`✅ Order saved - Status in DB: ${updatedOrder.status}, Updated at: ${updatedOrder.updatedAt}`);
+  // Use lean() to bypass any Mongoose caching
+  const updatedOrder = await Order.findById(req.params.id).lean();
+  console.log(`✅ Order refreshed from DB - Status: ${updatedOrder.status}, UpdatedAt: ${updatedOrder.updatedAt}`);
   
-  const orderUserId = updatedOrder.userId._id ? updatedOrder.userId._id.toString() : updatedOrder.userId.toString();
+  // Convert back to Mongoose document if needed for population
+  const orderDoc = await Order.findById(req.params.id)
+    .populate([
+      { path: 'userId', select: 'firstName lastName email phone' },
+      { path: 'items.foodItem', select: 'name imageUrl price description' },
+      { path: 'branchId', select: 'name address phone' },
+      { path: 'deliveryAgent', select: 'firstName lastName phone' }
+    ]);
+  
+  const orderUserId = orderDoc.userId._id ? orderDoc.userId._id.toString() : orderDoc.userId.toString();
 
   await sendOrderStatusNotification(
     orderUserId,
-    updatedOrder,
+    orderDoc,
     status,
     message ? { title: '📦 Order Update', body: message } : null
   );
@@ -513,9 +530,9 @@ router.patch('/:id/status', [
     success: true,
     message: 'Order status updated successfully',
     order: {
-      id: updatedOrder._id,
-      status: updatedOrder.status,
-      estimatedTimeRemaining: updatedOrder.estimatedTimeRemaining
+      id: orderDoc._id,
+      status: orderDoc.status,
+      estimatedTimeRemaining: orderDoc.estimatedTimeRemaining
     }
   });
 }));
