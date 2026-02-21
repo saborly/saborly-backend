@@ -27,6 +27,8 @@ const setting = require('./routes/settings');
 const offers = require('./routes/offer');
 const bannerRoutes = require('./routes/bannerRoutes');
 const contactRoutes = require('./routes/contact');
+const imageProxyRoutes = require('./routes/imageProxyRoutes');
+
 
 const app = express();
 const fetch = require('node-fetch');
@@ -47,6 +49,7 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
+app.use('/api/proxy', imageProxyRoutes);
 
 // CORS configuration
 const corsOptions = {
