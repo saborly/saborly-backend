@@ -7,8 +7,11 @@
 
 const multer = require('multer');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const fs = require('fs');
+
+// Use Node.js built-in crypto instead of uuid package (avoids ESM compatibility issues)
+const uuidv4 = () => crypto.randomUUID();
 
 // ─── Ensure upload directory exists ────────────────────────────────────────────
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'images');
