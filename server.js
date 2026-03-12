@@ -8,6 +8,7 @@ const compression = require('compression');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 
@@ -28,6 +29,7 @@ const offers = require('./routes/offer');
 const bannerRoutes = require('./routes/bannerRoutes');
 const contactRoutes = require('./routes/contact');
 const imageProxyRoutes = require('./routes/imageProxyRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
 
 const app = express();
@@ -102,6 +104,15 @@ if (process.env.NODE_ENV === 'development') {
 // Language detection middleware (global)
 app.use(detectLanguage);
 
+// ─── Local image storage — serve /uploads as public static files ──────────────
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  maxAge: '7d',          // Browser cache for 7 days
+  etag: true,
+  setHeaders: (res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+  }
+}));
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -124,6 +135,7 @@ const addCacheHeaders = (req, res, next) => {
 };
 
 // API Routes
+app.use('/api/v1/upload', uploadRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/categories', addCacheHeaders, categoryRoutes);
 app.use('/api/v1/food-items', addCacheHeaders, foodItemRoutes);
@@ -189,7 +201,7 @@ app.use(errorHandler);
 // MongoDB connection with optimized connection pooling
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+    const conn = await mongoose.connect(process.env.MONGODB_URI || "mongodb+srv://db_saborly:Dwdjd12KKC0F1ojJ@cluster0.u1qulrp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0", {
       // Connection pool optimization
       maxPoolSize: 10, // Maximum number of connections in the pool
       minPoolSize: 2, // Minimum number of connections to maintain
