@@ -1,5 +1,7 @@
 const axios = require('axios');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
 
 // Allowed domains for security
 const ALLOWED_DOMAINS = [
@@ -13,6 +15,12 @@ const ALLOWED_DOMAINS = [
   'res.cloudinary.com',
   // Add your trusted image domains here
 ];
+
+// Hostnames that belong to this server — avoid circular HTTP requests
+const SELF_HOSTNAMES = ['api.saborly.es', 'saborly.es', 'localhost', '127.0.0.1'];
+
+// Absolute path to the uploads directory (one level up from /controllers)
+const UPLOADS_DIR = path.resolve(__dirname, '..', 'uploads');
 
 // Cache configuration
 const CACHE_DURATION = 7 * 24 * 60 * 60; // 7 days in seconds
@@ -66,6 +74,37 @@ const proxyImage = async (req, res) => {
         error: 'Domain not allowed' 
       });
     }
+
+    // ─── Short-circuit for self-hosted uploads ──────────────────────────────
+    // When the URL points to this server (api.saborly.es/uploads/…), reading
+    // the file from disk avoids a circular HTTP round-trip which causes 403s
+    // from Vercel / nginx / reverse-proxy infrastructure.
+    let parsedUrl;
+    try { parsedUrl = new URL(imageUrl); } catch (_) { parsedUrl = null; }
+
+    if (parsedUrl && SELF_HOSTNAMES.includes(parsedUrl.hostname) &&
+        parsedUrl.pathname.startsWith('/uploads/')) {
+
+      // Sanitise the path to prevent directory traversal
+      const relPath = parsedUrl.pathname.replace(/^\//, '');           // strip leading /
+      const filePath = path.resolve(UPLOADS_DIR, '..', relPath);       // resolves to <project>/uploads/…
+
+      if (!filePath.startsWith(UPLOADS_DIR)) {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, error: 'File not found' });
+      }
+
+      const contentType = getContentType(imageUrl);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', `public, max-age=${CACHE_DURATION}`);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('X-Cache', 'FILESYSTEM');
+      return res.sendFile(filePath);
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // Check cache
     if (cache.has(imageUrl)) {
