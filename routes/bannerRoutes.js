@@ -6,6 +6,7 @@ const bannerController = require('../controllers/bannerController');
 // Public routes (for Flutter app)
 router.get('/active', bannerController.getActiveBanners);
 
+
 // Admin routes (add authentication middleware as needed)
 router.get('/getall', bannerController.getAllBanners);
 router.get('/:id', bannerController.getBannerById);

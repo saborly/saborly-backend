@@ -3,6 +3,8 @@ const url = require('url');
 
 // Allowed domains for security
 const ALLOWED_DOMAINS = [
+  'saborly.es',          // own API / uploads server
+  'api.saborly.es',
   'vercel-storage.com',
   'blob.vercel-storage.com',
   'isjqrgksamsoj2tf.public.blob.vercel-storage.com',
