@@ -42,6 +42,19 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
+// CORS — must be registered BEFORE any route that needs cross-origin access,
+// including /api/proxy.  Previously the proxy was mounted first so responses
+// had no Access-Control-Allow-Origin and the browser blocked them.
+const corsOptions = {
+  origin: true,
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Language', 'Accept-Language'],
+  exposedHeaders: ['Content-Language']
+};
+app.use(cors(corsOptions));
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -52,17 +65,6 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 app.use('/api/proxy', imageProxyRoutes);
-
-// CORS configuration
-const corsOptions = {
-  origin: true,
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Language', 'Accept-Language'],
-  exposedHeaders: ['Content-Language']
-};
-app.use(cors(corsOptions));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
