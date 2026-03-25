@@ -225,11 +225,16 @@ codPaymentType: {
 });
 
 // Generate order number before saving
-orderSchema.pre('save', async function(next) {
+// Uses timestamp + random suffix — fast (no countDocuments) and collision-safe
+orderSchema.pre('save', function(next) {
   if (this.isNew) {
-    const count = await mongoose.model('Order').countDocuments();
-    this.orderNumber = `FK${String(count + 1).padStart(6, '0')}`;
-    
+    // Only generate if not already set by the route handler
+    if (!this.orderNumber || this.orderNumber.startsWith('ORD')) {
+      const ts = Date.now().toString(36).toUpperCase();
+      const rnd = Math.random().toString(36).substring(2, 5).toUpperCase();
+      this.orderNumber = `FK${ts}${rnd}`;
+    }
+
     // Set estimated delivery time if not provided
     if (!this.estimatedDeliveryTime) {
       const totalTime = this.preparationTime + (this.deliveryType === 'delivery' ? this.deliveryTime : 0);

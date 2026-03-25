@@ -96,11 +96,9 @@ app.use(compression({
   }
 }));
 
-// Logging
+// Logging — only in development; 'combined' format is too verbose for production
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
-} else {
-  app.use(morgan('combined'));
 }
 
 // Language detection middleware (global)

@@ -102,16 +102,18 @@ router.get('/', [
       sortOptions = { 'rating.average': -1 };
   }
 
-  // Execute query (use lean() for better performance when not modifying documents)
-  const items = await FoodItem.find(query)
-    .populate('category', 'name icon imageUrl')
-    .sort(sortOptions)
-    .limit(parseInt(limit))
-    .skip(skip)
-    .select('-reviews')
-    .lean();
+  // Execute query and count in parallel for better performance
+  const [items, totalItems] = await Promise.all([
+    FoodItem.find(query)
+      .populate('category', 'name icon imageUrl')
+      .sort(sortOptions)
+      .limit(parseInt(limit))
+      .skip(skip)
+      .select('-reviews')
+      .lean(),
+    FoodItem.countDocuments(query)
+  ]);
 
-  const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 
   res.json({
@@ -231,16 +233,18 @@ router.get('/getallitems', [
       break;
   }
 
-  // Execute query (use lean() for better performance when not modifying documents)
-  const items = await FoodItem.find(query)
-    .populate('category', 'name icon')
-    .sort(sortOptions)
-    .limit(parseInt(limit))
-    .skip(skip)
-    .select('-reviews')
-    .lean();
+  // Execute query and count in parallel for better performance
+  const [items, totalItems] = await Promise.all([
+    FoodItem.find(query)
+      .populate('category', 'name icon')
+      .sort(sortOptions)
+      .limit(parseInt(limit))
+      .skip(skip)
+      .select('-reviews')
+      .lean(),
+    FoodItem.countDocuments(query)
+  ]);
 
-  const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 
   res.json({
@@ -334,48 +338,6 @@ router.get('/:id', [
   res.json({
     success: true,
     language: req.language,
-    item
-  });
-}));
-
-// @desc    Get single food item
-// @route   GET /api/v1/food-items/:id
-// @access  Public
-router.get('/:id', [
-  param('id').isMongoId().withMessage('Invalid food item ID')
-], optionalAuth, asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  const item = await FoodItem.findById(req.params.id)
-    .populate('category', 'name icon')
-    .populate({
-      path: 'reviews.user',
-      select: 'firstName lastName avatar'
-    });
-
-  if (!item) {
-    return res.status(404).json({
-      success: false,
-      message: 'Food item not found'
-    });
-  }
-
-  if (!item.isActive) {
-    return res.status(404).json({
-      success: false,
-      message: 'Food item is not available'
-    });
-  }
-
-  res.json({
-    success: true,
     item
   });
 }));

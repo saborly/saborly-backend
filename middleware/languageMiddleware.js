@@ -40,8 +40,6 @@ const detectLanguage = (req, res, next) => {
   // Set language in response header
   res.setHeader('Content-Language', language);
   
-  console.log(`🌍 Language detected: ${language} from ${req.path}`);
-  
   next();
 };
 
@@ -113,7 +111,6 @@ const localizeResponse = (req, res, next) => {
       return originalJson(data);
     }
     
-    console.log(`📦 Localizing response for language: ${req.language}`);
     
     // Process single item
     if (data.item) {

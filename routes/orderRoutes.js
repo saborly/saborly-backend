@@ -90,13 +90,17 @@ const {
     });
   }
 
-  // Process cart items - TRUST frontend calculations, only validate food items exist
+  // Process cart items - fetch all food items in one query (prevents N+1)
+  const itemIds = items.map(item => item.foodItem?.id || item.foodItem);
+  const foodItems = await FoodItem.find({ _id: { $in: itemIds } });
+  const foodItemMap = Object.fromEntries(foodItems.map(f => [f._id.toString(), f]));
+
   let processedItems = [];
   let calculatedSubtotal = 0;
 
   for (const item of items) {
-    const foodItemId = item.foodItem?.id || item.foodItem;
-    const foodItem = await FoodItem.findById(foodItemId);
+    const foodItemId = (item.foodItem?.id || item.foodItem).toString();
+    const foodItem = foodItemMap[foodItemId];
 
     if (!foodItem || !foodItem.isActive) {
       return res.status(400).json({
@@ -122,8 +126,15 @@ const {
     });
 
     calculatedSubtotal += totalPrice;
-    await foodItem.updateStock(item.quantity, "subtract");
   }
+
+  // Update stock for all items in parallel (avoids sequential awaits)
+  await Promise.all(
+    items.map(item => {
+      const foodItemId = (item.foodItem?.id || item.foodItem).toString();
+      return foodItemMap[foodItemId].updateStock(item.quantity, 'subtract');
+    })
+  );
 
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   const tax = clientTax !== undefined ? clientTax : 0.0;
@@ -132,11 +143,8 @@ const {
   // Use frontend's total since all calculations are done there
   const total = clientTotal !== undefined ? clientTotal : (calculatedSubtotal + deliveryFee + tax - discount);
 
-  const orderNumber = "ORD" + Date.now();
-
-  // Create order with frontend-calculated totals
+  // orderNumber is generated in the Order pre-save hook (timestamp + random suffix)
   const orderData = {
-    orderNumber,
     userId: req.user._id || req.user.id,
     items: processedItems,
     subtotal: clientSubtotal || calculatedSubtotal,
@@ -294,19 +302,21 @@ router.get('/getall', [
     }
   }
 
-  // Execute query with populations
-  const orders = await Order.find(queryFilter)
-    .populate([
-      { path: 'items.foodItem', select: 'name imageUrl price' },
-      { path: 'branchId', select: 'name address phone' },
-      { path: 'userId', select: 'firstName lastName phone email' }
-    ])
-    .sort({ createdAt: -1 })
-    .limit(parseInt(limit))
-    .skip(skip)
-    .lean();
+  // Execute query and count in parallel for better performance
+  const [orders, totalOrders] = await Promise.all([
+    Order.find(queryFilter)
+      .populate([
+        { path: 'items.foodItem', select: 'name imageUrl price' },
+        { path: 'branchId', select: 'name address phone' },
+        { path: 'userId', select: 'firstName lastName phone email' }
+      ])
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .lean(),
+    Order.countDocuments(queryFilter)
+  ]);
 
-  const totalOrders = await Order.countDocuments(queryFilter);
   const totalPages = Math.ceil(totalOrders / limit);
 
   res.json({
@@ -366,18 +376,20 @@ router.get('/', [
 
 
 
-  const orders = await Order.find(query)
-    .populate([
-      { path: 'items.foodItem', select: 'name imageUrl price' },
-      { path: 'branchId', select: 'name address phone' }
-    ])
-    .sort({ createdAt: -1 })
-    .limit(parseInt(limit))
-    .skip(skip)
-    .lean(); // Use lean() for better performance
-  
+  // Run query and count in parallel for better performance
+  const [orders, totalOrders] = await Promise.all([
+    Order.find(query)
+      .populate([
+        { path: 'items.foodItem', select: 'name imageUrl price' },
+        { path: 'branchId', select: 'name address phone' }
+      ])
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .lean(),
+    Order.countDocuments(query)
+  ]);
 
-  const totalOrders = await Order.countDocuments(query);
   const totalPages = Math.ceil(totalOrders / limit);
 
   res.json({
@@ -406,12 +418,7 @@ router.get('/:id', [
     });
   }
 
-  // Query order - Mongoose should handle caching, but let's ensure fresh data
-  // First, do a quick direct check of status from DB
-  const statusCheck = await Order.findById(req.params.id).select('status updatedAt').lean();
-  console.log(`🔍 Direct DB Status Check - Status: ${statusCheck?.status}, Updated: ${statusCheck?.updatedAt}`);
-  
-  // Now get full order with population
+  // Single query with full population — no extra lean check needed
   const order = await Order.findById(req.params.id)
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
@@ -425,17 +432,6 @@ router.get('/:id', [
       success: false,
       message: 'Order not found'
     });
-  }
-
-  // Log what we're returning - check both status and updatedAt
-  console.log(`📦 GET Order ${req.params.id} - Status: ${order.status}, Updated: ${order.updatedAt}`);
-  console.log(`🔍 GET Order Debug - Status type: ${typeof order.status}, Status value: ${JSON.stringify(order.status)}`);
-  
-  // Compare with direct check
-  if (statusCheck && statusCheck.status !== order.status) {
-    console.log(`⚠️ WARNING: Status mismatch! Direct DB: ${statusCheck.status}, Populated: ${order.status}`);
-    // Force update the order status from direct check
-    order.status = statusCheck.status;
   }
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
@@ -489,12 +485,6 @@ router.patch('/:id/status', [
     });
   }
 
-  // Log the status change
-  const oldStatus = order.status;
-  const oldUpdatedAt = order.updatedAt;
-  console.log(`🔄 Updating order ${req.params.id} status: ${oldStatus} → ${status}`);
-  console.log(`📅 Before save - UpdatedAt: ${oldUpdatedAt}`);
-
   // Explicitly set the status FIRST
   order.status = status;
 
@@ -514,15 +504,9 @@ router.patch('/:id/status', [
   order.markModified('status');
   
   // Save the order after all updates
-  const savedResult = await order.save();
-  console.log(`💾 Save result - Status: ${savedResult.status}, UpdatedAt: ${savedResult.updatedAt}`);
-  
-  // Refresh the order from database to ensure we have the latest data
-  // Use lean() to bypass any Mongoose caching
-  const updatedOrder = await Order.findById(req.params.id).lean();
-  console.log(`✅ Order refreshed from DB - Status: ${updatedOrder.status}, UpdatedAt: ${updatedOrder.updatedAt}`);
-  
-  // Convert back to Mongoose document if needed for population
+  await order.save();
+
+  // Single populate query — no redundant lean check
   const orderDoc = await Order.findById(req.params.id)
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },

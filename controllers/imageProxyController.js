@@ -55,21 +55,8 @@ const getContentType = (urlString) => {
   return contentTypes[extension] || 'application/octet-stream';
 };
 
-// Helper — apply CORS headers to every response (success, cache-hit, error)
-const setCorsHeaders = (res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-};
-
 // Main proxy controller
 const proxyImage = async (req, res) => {
-  // Apply CORS headers unconditionally so even error responses are readable
-  // by the browser.  Previously only the success/miss path set these headers,
-  // so cache-hit and error responses had no Access-Control-Allow-Origin and
-  // were blocked by the browser CORS policy.
-  setCorsHeaders(res);
-
   try {
     const imageUrl = req.query.url;
     
@@ -157,9 +144,12 @@ const proxyImage = async (req, res) => {
       });
     }
 
-    // Set response headers (CORS already set at top of handler)
+    // Set response headers
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', `public, max-age=${CACHE_DURATION}`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     res.setHeader('X-Cache', 'MISS');
 
     // Send image
