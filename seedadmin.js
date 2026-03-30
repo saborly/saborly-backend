@@ -7,6 +7,7 @@ const FoodItem = mongoose.connection.collection("banners");
 await FoodItem.updateMany(
   { imageUrl: { $regex: "aglhrjakaivffstf\\.public\\.blob\\.vercel-storage\\.com" } },
   [
+  
     {
       $set: {
         imageUrl: {
