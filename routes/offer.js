@@ -99,15 +99,17 @@ router.get('/', [
     // Add discount display for frontend
     offerObj.discountDisplay = getDiscountDisplay(offer);
     
-    if (offerObj.appliedToItems && offerObj.appliedToItems.length > 0) {
-      offerObj.appliedToItems = offerObj.appliedToItems.map(item => {
+    if (Array.isArray(offerObj.appliedToItems) && offerObj.appliedToItems.length > 0) {
+      offerObj.appliedToItems = offerObj.appliedToItems
+        .filter(item => item && typeof item.price === 'number')
+        .map(item => {
         const discountedPrice = calculateItemDiscount(item.price, offer);
         return {
           ...item,
           discountedPrice,
           savings: item.price - discountedPrice
         };
-      });
+        });
     }
 
     return offerObj;
@@ -271,8 +273,9 @@ router.get('/items-with-offers', [
 
   const itemIds = new Set();
   availableOffers.forEach(offer => {
-    offer.appliedToItems.forEach(item => {
-      if (item._id) itemIds.add(item._id.toString());
+    const appliedItems = Array.isArray(offer.appliedToItems) ? offer.appliedToItems : [];
+    appliedItems.forEach(item => {
+      if (item && item._id) itemIds.add(item._id.toString());
     });
   });
 
@@ -287,9 +290,10 @@ router.get('/items-with-offers', [
   const items = await FoodItem.find(itemQuery).populate('category', 'name icon');
 
   const itemsWithOffers = items.map(item => {
-    const itemOffers = availableOffers.filter(offer =>
-      offer.appliedToItems.some(oi => oi._id.toString() === item._id.toString())
-    );
+    const itemOffers = availableOffers.filter(offer => {
+      const appliedItems = Array.isArray(offer.appliedToItems) ? offer.appliedToItems : [];
+      return appliedItems.some(oi => oi && oi._id && oi._id.toString() === item._id.toString());
+    });
 
     let bestOffer = null;
     let bestDiscountedPrice = item.price;

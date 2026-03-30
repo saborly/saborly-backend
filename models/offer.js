@@ -242,7 +242,8 @@ offerSchema.index({ isOneTimePerDevice: 1 });
 // Method to check if device has already claimed this offer
 offerSchema.methods.hasDeviceClaimed = function(deviceId) {
   if (!this.isOneTimePerDevice) return false;
-  return this.claimedDevices.some(claim => claim.deviceId === deviceId);
+  const claimedDevices = Array.isArray(this.claimedDevices) ? this.claimedDevices : [];
+  return claimedDevices.some(claim => claim && claim.deviceId === deviceId);
 };
 
 // Method to mark device as claimed
