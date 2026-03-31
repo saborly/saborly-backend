@@ -324,7 +324,9 @@ async function main() {
 
   ensureUploadDir();
 
-  await mongoose.connect(process.env.MONGODB_URI);
+  await mongoose.connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 30000,
+  });
   console.log('✅ MongoDB connected');
 
   try {

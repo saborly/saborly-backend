@@ -206,7 +206,7 @@ const connectDB = async () => {
       maxPoolSize: 10, // Maximum number of connections in the pool
       minPoolSize: 2, // Minimum number of connections to maintain
       maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
-      serverSelectionTimeoutMS: 5000, // Timeout for server selection
+      serverSelectionTimeoutMS: 30000, // Timeout for server selection
       socketTimeoutMS: 45000, // Socket timeout
       // Buffer commands if connection is down
       bufferCommands: true,
