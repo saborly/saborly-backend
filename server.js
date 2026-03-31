@@ -214,6 +214,8 @@ const connectDB = async () => {
       retryWrites: true,
       retryReads: true,
     });
+
+    
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     await setupIndexes();
   } catch (error) {
