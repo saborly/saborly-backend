@@ -224,9 +224,9 @@ codPaymentType: {
   toObject: { virtuals: true }
 });
 
-// Generate order number before saving
+// Generate order number before validation to avoid required validation errors
 // Uses timestamp + random suffix — fast (no countDocuments) and collision-safe
-orderSchema.pre('save', function(next) {
+orderSchema.pre('validate', function(next) {
   if (this.isNew) {
     // Only generate if not already set by the route handler
     if (!this.orderNumber || this.orderNumber.startsWith('ORD')) {
