@@ -133,7 +133,7 @@ const addCacheHeaders = (req, res, next) => {
   }
   next();
 };
-
+console.log("mongodb uri....", process.env.MONGODB_URI);
 // API Routes
 app.use('/api/v1/upload', uploadRoutes);
 app.use('/api/v1/auth', authRoutes);
@@ -155,7 +155,7 @@ app.get('/proxy-image', async (req, res) => {
   if (!url) {
     return res.status(400).json({ error: 'URL parameter required' });
   }
-  
+
   try {
     // Check cache first
     const cached = imageCache.get(url);
@@ -165,7 +165,7 @@ app.get('/proxy-image', async (req, res) => {
       res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
       return res.send(cached.buffer);
     }
-    
+
     const response = await fetch(url);
     const buffer = await response.arrayBuffer();
     const contentType = response.headers.get('content-type') || 'image/jpeg';
@@ -176,7 +176,7 @@ app.get('/proxy-image', async (req, res) => {
       contentType,
       timestamp: Date.now()
     });
-    
+
     // Limit cache size (keep last 100 images)
     if (imageCache.size > 100) {
       const firstKey = imageCache.keys().next().value;
@@ -201,44 +201,44 @@ app.use(errorHandler);
 // MongoDB connection with optimized connection pooling
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI || "mongodb+srv://db_saborly:Dwdjd12KKC0F1ojJ@cluster0.u1qulrp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0", {
-      // Connection pool optimization
-      maxPoolSize: 10, // Maximum number of connections in the pool
-      minPoolSize: 2, // Minimum number of connections to maintain
-      maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
-      serverSelectionTimeoutMS: 30000, // Timeout for server selection
-      socketTimeoutMS: 45000, // Socket timeout
-      // Buffer commands if connection is down
+    if (!process.env.MONGODB_URI) {
+      throw new Error("MONGODB_URI is missing in .env");
+    }
+
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      maxIdleTimeMS: 30000,
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
       bufferCommands: true,
-      // Retry configuration
       retryWrites: true,
       retryReads: true,
     });
 
-    
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     await setupIndexes();
+
   } catch (error) {
-    console.error('Database connection failed:', error.message);
+    console.error('Database connection failed->', error.message);
     process.exit(1);
   }
 };
-
 // Setup database indexes
 const setupIndexes = async () => {
   try {
     const db = mongoose.connection.db;
-    
+
     // Users collection indexes
     await db.collection('users').createIndex({ email: 1 }, { unique: true });
     await db.collection('users').createIndex({ phone: 1 });
     await db.collection('users').createIndex({ lastActivity: 1 }); // For inactivity checks
-    
+
     // Food items collection indexes (with multilingual support)
-    await db.collection('fooditems').createIndex({ 
-      'name.en': 'text', 
-      'name.es': 'text', 
-      'name.ca': 'text', 
+    await db.collection('fooditems').createIndex({
+      'name.en': 'text',
+      'name.es': 'text',
+      'name.ca': 'text',
       'name.ar': 'text',
       'description.en': 'text',
       'description.es': 'text',
@@ -249,23 +249,23 @@ const setupIndexes = async () => {
     await db.collection('fooditems').createIndex({ isActive: 1 });
     await db.collection('fooditems').createIndex({ isFeatured: 1 });
     await db.collection('fooditems').createIndex({ isPopular: 1 });
-    
+
     // Categories collection indexes (with multilingual support)
-    await db.collection('categories').createIndex({ 
-      'name.en': 'text', 
-      'name.es': 'text', 
-      'name.ca': 'text', 
+    await db.collection('categories').createIndex({
+      'name.en': 'text',
+      'name.es': 'text',
+      'name.ca': 'text',
       'name.ar': 'text'
     });
     await db.collection('categories').createIndex({ isActive: 1 });
     await db.collection('categories').createIndex({ sortOrder: 1 });
-    
+
     // Orders collection indexes
     await db.collection('orders').createIndex({ userId: 1 });
     await db.collection('orders').createIndex({ status: 1 });
     await db.collection('orders').createIndex({ createdAt: -1 });
     await db.collection('orders').createIndex({ branchId: 1 });
-    
+
     console.log('Database indexes created successfully (with multilingual support)');
   } catch (error) {
     console.error('Error creating indexes:', error.message);
@@ -274,10 +274,10 @@ const setupIndexes = async () => {
 
 function gracefulShutdown(signal) {
   console.log(`Received ${signal}. Shutting down gracefully...`);
-  
+
   server.close(() => {
     console.log('HTTP server closed.');
-    
+
     mongoose.connection.close(false, () => {
       console.log('MongoDB connection closed.');
       process.exit(0);

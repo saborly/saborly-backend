@@ -55,6 +55,11 @@ const userSchema = new mongoose.Schema({
     sparse: true,
     unique: true
   },
+  appleId: {
+    type: String,
+    sparse: true,
+    unique: true
+  },
 phone: {
   type: String,
   validate: {

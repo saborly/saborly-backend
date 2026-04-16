@@ -11,6 +11,7 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
 const { OAuth2Client } = require('google-auth-library');
+const appleSignin = require('apple-signin-auth');
 
 // ✅ CRITICAL FIX: Use the WEB CLIENT ID for token verification
 // This is the serverClientId used in your Flutter app
@@ -508,6 +509,205 @@ router.post('/google-signin', [
     });
   }
 }));
+
+// @desc    Apple Sign-In
+// @route   POST /api/v1/auth/apple-signin
+// @access  Public
+router.post('/apple-signin', [
+  body('identityToken')
+    .notEmpty()
+    .withMessage('Apple identity token is required'),
+  body('firstName')
+    .optional()
+    .trim(),
+  body('lastName')
+    .optional()
+    .trim(),
+  body('fcmToken')
+    .optional()
+    .trim(),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { identityToken, firstName, lastName, fcmToken, deviceId, platform } = req.body;
+
+  try {
+    console.log('🍎 Verifying Apple identity token...');
+
+    // Verify the Apple identity token
+    const applePayload = await appleSignin.verifyIdToken(identityToken, {
+      audience: process.env.APPLE_CLIENT_ID, // Your app's Bundle ID e.g. com.yourcompany.app
+      ignoreExpiration: false,
+    });
+
+    const {
+      sub: appleId,       // Apple's unique user identifier
+      email,
+      email_verified: emailVerified,
+    } = applePayload;
+
+    if (!appleId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Apple token: missing user identifier'
+      });
+    }
+
+    console.log('✅ Apple token verified. appleId:', appleId);
+
+    // Try finding user by appleId first (most reliable), then by email
+    let user = await User.findOne({ appleId });
+
+    if (!user && email) {
+      user = await User.findOne({ email });
+    }
+
+    if (user) {
+      // ── Existing user ────────────────────────────────────────────────
+      console.log('✅ Existing user found for Apple Sign-In:', user.email);
+
+      if (!user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account has been deactivated. Please contact support.'
+        });
+      }
+
+      // Link appleId if not already set
+      if (!user.appleId) {
+        user.appleId = appleId;
+        await user.save({ validateBeforeSave: false });
+      }
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'ios'
+          );
+          console.log('✅ FCM token updated during Apple sign-in for:', user.email);
+        } catch (err) {
+          console.error('⚠️ Failed to update FCM token during Apple sign-in:', err.message);
+        }
+      }
+
+      await user.updateLastLogin();
+
+      const token = user.generateAuthToken();
+
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone || '',
+          role: user.role,
+          avatar: user.avatar,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+
+    } else {
+      // ── New user ─────────────────────────────────────────────────────
+      // Apple only sends name on the VERY FIRST sign-in, so we use what's
+      // passed from the client (which should cache it that first time).
+      console.log('🆕 Creating new user via Apple Sign-In');
+
+      const userEmail = email || `${appleId}@private.appleid.com`;
+      const userFirstName = firstName || 'Apple';
+      const userLastName = lastName || 'User';
+      const randomPassword = require('crypto').randomBytes(32).toString('hex');
+
+      user = await User.create({
+        firstName: userFirstName,
+        lastName: userLastName,
+        email: userEmail,
+        phone: '',
+        password: randomPassword,
+        emailVerified: emailVerified === true || emailVerified === 'true',
+        authProvider: 'apple',
+        appleId,
+      });
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        try {
+          await user.updateFCMToken(
+            fcmToken,
+            deviceId || 'default',
+            platform || 'ios'
+          );
+          console.log('✅ FCM token saved during Apple registration for:', userEmail);
+        } catch (err) {
+          console.error('⚠️ Failed to save FCM token during Apple registration:', err.message);
+        }
+      }
+
+      await user.updateLastLogin();
+
+      const token = user.generateAuthToken();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Account created successfully',
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone || '',
+          role: user.role,
+          avatar: user.avatar || null,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          lastLogin: user.lastLogin
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Apple Sign-In error:', error);
+
+    if (error.message && (
+      error.message.includes('expired') ||
+      error.message.includes('invalid') ||
+      error.message.includes('JsonWebToken')
+    )) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired Apple identity token'
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Apple sign-in failed. Please try again.'
+    });
+  }
+}));
+
 // @desc    Login user
 // @route   POST /api/v1/auth/login
 // @access  Public
