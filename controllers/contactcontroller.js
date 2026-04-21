@@ -40,6 +40,8 @@ exports.submitContactForm = async (req, res) => {
     // Check if user is authenticated
     const userId = req.user ? req.user.id : null;
 
+
+    
     const contact = await Contact.create({
       branchId: req.branchId,
       name: name.trim(),
