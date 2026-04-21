@@ -2,16 +2,18 @@
 const express = require('express');
 const router = express.Router();
 const addressController = require('../controllers/Addresscontroller');
-const { auth, authorize } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
+const branchCtx = [auth, attachBranchToRequest, resolveBranchContext];
 
-router.get('/', auth,addressController.getSavedAddresses);
-router.post('/',auth, addressController.saveAddress);
-router.put('/:addressId',auth, addressController.updateAddress);
-router.delete('/:addressId',auth ,addressController.deleteAddress);
-router.patch('/:addressId/default', auth,addressController.setDefaultAddress);
-router.post('/validate',auth, addressController.validateAddress);
-router.get('/autocomplete',auth, addressController.getAddressAutocomplete);
+router.get('/', ...branchCtx, addressController.getSavedAddresses);
+router.post('/', ...branchCtx, addressController.saveAddress);
+router.put('/:addressId', ...branchCtx, addressController.updateAddress);
+router.delete('/:addressId', ...branchCtx, addressController.deleteAddress);
+router.patch('/:addressId/default', ...branchCtx, addressController.setDefaultAddress);
+router.post('/validate', ...branchCtx, addressController.validateAddress);
+router.get('/autocomplete', ...branchCtx, addressController.getAddressAutocomplete);
+router.get('/place-details', ...branchCtx, addressController.getPlaceDetails);
 
-router.get('/place-details',auth, addressController.getPlaceDetails);
 module.exports = router;

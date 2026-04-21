@@ -374,13 +374,16 @@ orderSchema.methods.addRating = function(ratingData) {
 };
 
 // Static method to get order statistics
-orderSchema.statics.getOrderStats = async function(startDate, endDate) {
+orderSchema.statics.getOrderStats = async function(startDate, endDate, branchId = null) {
   const matchConditions = {
     createdAt: {
       $gte: startDate,
       $lte: endDate
     }
   };
+  if (branchId) {
+    matchConditions.branchId = branchId;
+  }
 
   const stats = await this.aggregate([
     { $match: matchConditions },

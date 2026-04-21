@@ -5,6 +5,7 @@ const { Category, FoodItem } = require('../models/Category');
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { detectLanguage, localizeResponse } = require('../middleware/languageMiddleware');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
 const router = express.Router();
 
@@ -15,8 +16,8 @@ router.use(localizeResponse);
 // @desc    Get all categories (localized)
 // @route   GET /api/v1/categories?lang=es
 // @access  Public
-router.get('/', asyncHandler(async (req, res) => {
-  const categories = await Category.find({ isActive: true })
+router.get('/', attachBranchToRequest, resolveBranchContext, asyncHandler(async (req, res) => {
+  const categories = await Category.find({ isActive: true, branchId: req.branchId })
     .populate('itemsCount')
     .sort({ sortOrder: 1, 'name.en': 1 });
 
@@ -32,8 +33,8 @@ router.get('/', asyncHandler(async (req, res) => {
 // @desc    Get all categories including inactive (for admin)
 // @route   GET /api/v1/categories/all?lang=es
 // @access  Private (Admin/Manager)
-router.get('/all', [auth, authorize('admin', 'manager')], asyncHandler(async (req, res) => {
-  const categories = await Category.find()
+router.get('/all', [auth, attachBranchToRequest, resolveBranchContext, authorize('admin', 'manager')], asyncHandler(async (req, res) => {
+  const categories = await Category.find({ branchId: req.branchId })
     .populate('itemsCount')
     .sort({ sortOrder: 1, 'name.en': 1 });
 
@@ -49,6 +50,8 @@ router.get('/all', [auth, authorize('admin', 'manager')], asyncHandler(async (re
 // @route   GET /api/v1/categories/:id?lang=es
 // @access  Public
 router.get('/:id', [
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid category ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -60,7 +63,7 @@ router.get('/:id', [
     });
   }
 
-  const category = await Category.findById(req.params.id).populate('itemsCount');
+  const category = await Category.findOne({ _id: req.params.id, branchId: req.branchId }).populate('itemsCount');
 
   if (!category) {
     return res.status(404).json({
@@ -88,6 +91,8 @@ router.get('/:id', [
 // @access  Private (Admin/Manager only)
 router.post('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('name.en').trim().notEmpty().withMessage('English name is required'),
   body('name.es').optional().trim(),
@@ -111,7 +116,7 @@ router.post('/', [
     });
   }
 
-  const category = await Category.create(req.body);
+  const category = await Category.create({ ...req.body, branchId: req.branchId });
 
   res.status(201).json({
     success: true,
@@ -125,6 +130,8 @@ router.post('/', [
 // @access  Private (Admin/Manager only)
 router.put('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid category ID'),
   body('name.en').optional().trim().notEmpty().withMessage('English name cannot be empty'),
@@ -149,7 +156,7 @@ router.put('/:id', [
     });
   }
 
-  let category = await Category.findById(req.params.id);
+  let category = await Category.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!category) {
     return res.status(404).json({
@@ -191,8 +198,8 @@ router.put('/:id', [
     }
   });
 
-  category = await Category.findByIdAndUpdate(
-    req.params.id,
+  category = await Category.findOneAndUpdate(
+    { _id: req.params.id, branchId: req.branchId },
     updateData,
     { new: true, runValidators: true }
   );
@@ -209,6 +216,8 @@ router.put('/:id', [
 // @access  Private (Admin only)
 router.delete('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   param('id').isMongoId().withMessage('Invalid category ID')
 ], asyncHandler(async (req, res) => {
@@ -221,7 +230,7 @@ router.delete('/:id', [
     });
   }
 
-  const category = await Category.findById(req.params.id);
+  const category = await Category.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!category) {
     return res.status(404).json({
@@ -230,7 +239,7 @@ router.delete('/:id', [
     });
   }
 
-  const itemCount = await FoodItem.countDocuments({ category: req.params.id });
+  const itemCount = await FoodItem.countDocuments({ category: req.params.id, branchId: req.branchId });
 
   if (itemCount > 0) {
     return res.status(400).json({

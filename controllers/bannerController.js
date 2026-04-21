@@ -5,7 +5,7 @@ const Banner = require('../models/Banner');
 exports.getActiveBanners = async (req, res) => {
   try {
     const { category } = req.query;
-    const banners = await Banner.getActiveBanners(category);
+    const banners = await Banner.getActiveBanners(req.branchId, category);
     
     res.status(200).json({
       success: true,
@@ -26,7 +26,7 @@ exports.getAllBanners = async (req, res) => {
   try {
     const { page = 1, limit = 10, category, isActive } = req.query;
     
-    const query = {};
+    const query = { branchId: req.branchId };
     if (category) query.category = category;
     if (isActive !== undefined) query.isActive = isActive === 'true';
 
@@ -56,7 +56,7 @@ exports.getAllBanners = async (req, res) => {
 // Get single banner by ID
 exports.getBannerById = async (req, res) => {
   try {
-    const banner = await Banner.findById(req.params.id);
+    const banner = await Banner.findOne({ _id: req.params.id, branchId: req.branchId });
     
     if (!banner) {
       return res.status(404).json({
@@ -81,7 +81,7 @@ exports.getBannerById = async (req, res) => {
 // Create new banner
 exports.createBanner = async (req, res) => {
   try {
-    const banner = await Banner.create(req.body);
+    const banner = await Banner.create({ ...req.body, branchId: req.branchId });
     
     res.status(201).json({
       success: true,
@@ -100,8 +100,8 @@ exports.createBanner = async (req, res) => {
 // Update banner
 exports.updateBanner = async (req, res) => {
   try {
-    const banner = await Banner.findByIdAndUpdate(
-      req.params.id,
+    const banner = await Banner.findOneAndUpdate(
+      { _id: req.params.id, branchId: req.branchId },
       req.body,
       { new: true, runValidators: true }
     );
@@ -130,7 +130,7 @@ exports.updateBanner = async (req, res) => {
 // Delete banner
 exports.deleteBanner = async (req, res) => {
   try {
-    const banner = await Banner.findByIdAndDelete(req.params.id);
+    const banner = await Banner.findOneAndDelete({ _id: req.params.id, branchId: req.branchId });
 
     if (!banner) {
       return res.status(404).json({
@@ -155,7 +155,7 @@ exports.deleteBanner = async (req, res) => {
 // Toggle banner active status
 exports.toggleBannerStatus = async (req, res) => {
   try {
-    const banner = await Banner.findById(req.params.id);
+    const banner = await Banner.findOne({ _id: req.params.id, branchId: req.branchId });
 
     if (!banner) {
       return res.status(404).json({
@@ -187,7 +187,7 @@ exports.reorderBanners = async (req, res) => {
     const { bannerOrders } = req.body; // Array of { id, order }
 
     const updatePromises = bannerOrders.map(({ id, order }) =>
-      Banner.findByIdAndUpdate(id, { order })
+      Banner.findOneAndUpdate({ _id: id, branchId: req.branchId }, { order })
     );
 
     await Promise.all(updatePromises);

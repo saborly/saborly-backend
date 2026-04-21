@@ -10,8 +10,10 @@ const MAX_DELIVERY_DISTANCE = 3.5; // km
 // Get all saved addresses for user
 exports.getSavedAddresses = async (req, res) => {
   try {
-    const addresses = await Address.find({ userId: req.user._id || req.user.userId || req.user.id })
-      .sort({ isDefault: -1, createdAt: -1 });
+    const addresses = await Address.find({
+      branchId: req.branchId,
+      userId: req.user._id || req.user.userId || req.user.id,
+    }).sort({ isDefault: -1, createdAt: -1 });
 
     res.json({
       success: true,
@@ -78,6 +80,7 @@ exports.saveAddress = async (req, res) => {
 
     // Create new address
     const newAddress = new Address({
+      branchId: req.branchId,
       userId: req.user._id || req.user.userId || req.user.id,
       type: normalizedType,
       address: address.trim(),
@@ -175,6 +178,7 @@ exports.updateAddress = async (req, res) => {
     // Find address
     const existingAddress = await Address.findOne({
       _id: addressId,
+      branchId: req.branchId,
       userId: req.user._id
     });
 
@@ -258,6 +262,7 @@ exports.deleteAddress = async (req, res) => {
 
     const address = await Address.findOneAndDelete({
       _id: addressId,
+      branchId: req.branchId,
       userId: req.user._id
     });
 
@@ -270,7 +275,7 @@ exports.deleteAddress = async (req, res) => {
 
     // If deleted address was default, set another as default
     if (address.isDefault) {
-      const nextAddress = await Address.findOne({ userId: req.user._id });
+      const nextAddress = await Address.findOne({ branchId: req.branchId, userId: req.user._id });
       if (nextAddress) {
         nextAddress.isDefault = true;
         await nextAddress.save();
@@ -298,6 +303,7 @@ exports.setDefaultAddress = async (req, res) => {
 
     const address = await Address.findOne({
       _id: addressId,
+      branchId: req.branchId,
       userId: req.user._id
     });
 
@@ -308,9 +314,8 @@ exports.setDefaultAddress = async (req, res) => {
       });
     }
 
-    // Remove default from all other addresses
     await Address.updateMany(
-      { userId: req.user._id },
+      { branchId: req.branchId, userId: req.user._id },
       { $set: { isDefault: false } }
     );
 

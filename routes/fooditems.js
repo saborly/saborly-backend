@@ -4,6 +4,7 @@ const { FoodItem, Category } = require('../models/Category');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { detectLanguage, localizeResponse } = require('../middleware/languageMiddleware');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
 const router = express.Router();
 
@@ -15,6 +16,8 @@ router.use(detectLanguage);
 router.use(localizeResponse);
 
 router.get('/', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 1000 }),
   query('category').optional().isMongoId(),
@@ -51,7 +54,7 @@ router.get('/', [
   } = req.query;
 
   const skip = (page - 1) * limit;
-  let query = { isActive: true };
+  let query = { isActive: true, branchId: req.branchId };
 
   // Apply filters
   if (category) query.category = category;
@@ -134,6 +137,8 @@ router.get('/', [
 // routes/foodItems.js - Return all languages
 
 router.get('/getallitems', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('Limit must be between 1 and 1000'),
   query('category').optional().isMongoId().withMessage('Category must be a valid ID'),
@@ -171,7 +176,7 @@ router.get('/getallitems', [
   } = req.query;
 
   const skip = (page - 1) * limit;
-  let query = { isActive: true };
+  let query = { isActive: true, branchId: req.branchId };
 
   // Apply filters
   if (category) query.category = category;
@@ -261,11 +266,13 @@ router.get('/getallitems', [
 // @route   GET /api/v1/food-items/featured
 // @access  Public
 router.get('/featured', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('limit').optional().isInt({ min: 1, max: 20 })
 ], asyncHandler(async (req, res) => {
   const { limit = 6 } = req.query;
 
-  const items = await FoodItem.find({ isFeatured: true, isActive: true })
+  const items = await FoodItem.find({ isFeatured: true, isActive: true, branchId: req.branchId })
     .populate('category', 'name icon')
     .sort({ createdAt: -1 })
     .limit(parseInt(limit));
@@ -282,11 +289,13 @@ router.get('/featured', [
 // @route   GET /api/v1/food-items/popular
 // @access  Public
 router.get('/popular', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('limit').optional().isInt({ min: 1, max: 20 })
 ], asyncHandler(async (req, res) => {
   const { limit = 10 } = req.query;
 
-  const items = await FoodItem.find({ isActive: true })
+  const items = await FoodItem.find({ isActive: true, branchId: req.branchId })
     .populate('category', 'name icon')
     .sort({ totalSold: -1, 'rating.average': -1 })
     .limit(parseInt(limit));
@@ -303,6 +312,8 @@ router.get('/popular', [
 // @route   GET /api/v1/food-items/:id?lang=es
 // @access  Public
 router.get('/:id', [
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid food item ID')
 ], optionalAuth, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -314,7 +325,7 @@ router.get('/:id', [
     });
   }
 
-  const item = await FoodItem.findById(req.params.id)
+  const item = await FoodItem.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate('category', 'name icon')
     .populate({
       path: 'reviews.user',
@@ -347,6 +358,8 @@ router.get('/:id', [
 // @access  Private
 router.post('/:id/reviews', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid food item ID'),
   body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
   body('comment').optional().trim().isLength({ max: 500 }).withMessage('Comment cannot exceed 500 characters')
@@ -362,7 +375,7 @@ router.post('/:id/reviews', [
 
   const { rating, comment } = req.body;
 
-  const item = await FoodItem.findById(req.params.id);
+  const item = await FoodItem.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!item) {
     return res.status(404).json({
@@ -397,6 +410,8 @@ router.post('/:id/reviews', [
 // @access  Private (Admin/Manager only)
 router.post('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('name.en').trim().notEmpty().withMessage('English name is required'),
   body('name.es').optional().trim(),
@@ -421,7 +436,7 @@ router.post('/', [
     });
   }
 
-  const category = await Category.findById(req.body.category);
+  const category = await Category.findOne({ _id: req.body.category, branchId: req.branchId });
   if (!category) {
     return res.status(400).json({
       success: false,
@@ -429,7 +444,7 @@ router.post('/', [
     });
   }
 
-  const item = await FoodItem.create(req.body);
+  const item = await FoodItem.create({ ...req.body, branchId: req.branchId });
   await item.populate('category', 'name icon');
 
   res.status(201).json({
@@ -448,6 +463,8 @@ router.post('/', [
 // @access  Private (Admin/Manager only)
 router.put('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid food item ID'),
   body('name.en').optional().trim().notEmpty(),
@@ -473,7 +490,7 @@ router.put('/:id', [
     });
   }
 
-  let item = await FoodItem.findById(req.params.id);
+  let item = await FoodItem.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!item) {
     return res.status(404).json({
@@ -483,7 +500,7 @@ router.put('/:id', [
   }
 
   if (req.body.category) {
-    const category = await Category.findById(req.body.category);
+    const category = await Category.findOne({ _id: req.body.category, branchId: req.branchId });
     if (!category) {
       return res.status(400).json({
         success: false,
@@ -558,8 +575,8 @@ router.put('/:id', [
     updateData.seoData = req.body.seoData;
   }
 
-  item = await FoodItem.findByIdAndUpdate(
-    req.params.id,
+  item = await FoodItem.findOneAndUpdate(
+    { _id: req.params.id, branchId: req.branchId },
     updateData,
     { new: true, runValidators: true }
   ).populate('category', 'name icon');
@@ -575,10 +592,12 @@ router.put('/:id', [
 // @access  Private (Admin only)
 router.delete('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   param('id').isMongoId()
 ], asyncHandler(async (req, res) => {
-  const item = await FoodItem.findById(req.params.id);
+  const item = await FoodItem.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!item) {
     return res.status(404).json({
@@ -601,6 +620,8 @@ router.delete('/:id', [
 // @access  Private (Admin/Manager only)
 router.patch('/:id/stock', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid food item ID'),
   body('quantity').isInt().withMessage('Quantity must be an integer'),
@@ -617,7 +638,7 @@ router.patch('/:id/stock', [
 
   const { quantity, operation } = req.body;
 
-  const item = await FoodItem.findById(req.params.id);
+  const item = await FoodItem.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!item) {
     return res.status(404).json({

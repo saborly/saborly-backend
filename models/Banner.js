@@ -2,6 +2,12 @@
 const mongoose = require('mongoose');
 
 const bannerSchema = new mongoose.Schema({
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
   title: {
     type: String,
     required: true,
@@ -47,7 +53,7 @@ const bannerSchema = new mongoose.Schema({
 });
 
 // Index for efficient querying
-bannerSchema.index({ isActive: 1, order: 1 });
+bannerSchema.index({ branchId: 1, isActive: 1, order: 1 });
 
 // Virtual to check if banner is currently valid
 bannerSchema.virtual('isValid').get(function() {
@@ -58,18 +64,16 @@ bannerSchema.virtual('isValid').get(function() {
   return true;
 });
 
-// Method to get active banners
-bannerSchema.statics.getActiveBanners = async function(category = null) {
+// Method to get active banners for a branch
+bannerSchema.statics.getActiveBanners = async function(branchId, category = null) {
+  const now = new Date();
   const query = {
+    branchId,
     isActive: true,
-    $or: [
-      { startDate: null },
-      { startDate: { $lte: new Date() } }
+    $and: [
+      { $or: [{ startDate: null }, { startDate: { $lte: now } }] },
+      { $or: [{ endDate: null }, { endDate: { $gte: now } }] },
     ],
-    $or: [
-      { endDate: null },
-      { endDate: { $gte: new Date() } }
-    ]
   };
 
   if (category) {

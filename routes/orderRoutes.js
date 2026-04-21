@@ -7,7 +7,8 @@ const User = require('../models/User');
 
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const Branch =require('../models/Branch');
+const Branch = require('../models/Branch');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const router = express.Router();
 const { sendOrderStatusNotification, sendNewOrderNotification } = require('../utils/notificationService');
 const {
@@ -39,6 +40,8 @@ router.get("/test-notify", async (req, res) => {
 // @access  Private
 router.post('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
   body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
@@ -90,9 +93,16 @@ const {
     });
   }
 
+  if (!branchId || branchId.toString() !== req.branchId.toString()) {
+    return res.status(400).json({
+      success: false,
+      message: 'branchId must match the active branch context'
+    });
+  }
+
   // Process cart items - fetch all food items in one query (prevents N+1)
   const itemIds = items.map(item => item.foodItem?.id || item.foodItem);
-  const foodItems = await FoodItem.find({ _id: { $in: itemIds } });
+  const foodItems = await FoodItem.find({ _id: { $in: itemIds }, branchId: req.branchId });
   const foodItemMap = Object.fromEntries(foodItems.map(f => [f._id.toString(), f]));
 
   let processedItems = [];
@@ -188,10 +198,14 @@ const {
     }
 
     // 2. Send notification to ALL admins and managers
-    const adminUsers = await User.find({ 
-      role: { $in: ['admin', 'manager', 'superadmin'] },
+    const adminUsers = await User.find({
+      role: { $in: ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'] },
       isActive: true,
-      fcmToken: { $exists: true, $ne: null }
+      fcmToken: { $exists: true, $ne: null },
+      $or: [
+        { branchId: order.branchId },
+        { role: { $in: ['superadmin', 'super_admin'] } },
+      ],
     }).select('firstName lastName email fcmToken fcmTokens');
 
     if (adminUsers.length > 0) {
@@ -241,6 +255,9 @@ const {
 
 router.get('/getall', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
   query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
@@ -258,7 +275,7 @@ router.get('/getall', [
   const { page = 1, limit = 10, status, search } = req.query;
   const skip = (page - 1) * limit;
 
-  let queryFilter = {};
+  let queryFilter = { branchId: req.branchId };
   if (status) queryFilter.status = status;
 
   // Handle search - need to search in User collection for customer name
@@ -268,6 +285,7 @@ router.get('/getall', [
 
     // First, find matching users
     const matchingUsers = await User.find({
+      branchId: req.branchId,
       $or: [
         { firstName: searchRegex },
         { lastName: searchRegex },
@@ -330,6 +348,8 @@ router.get('/getall', [
 }));
 router.get('/stats', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
 
 ], asyncHandler(async (req, res) => {
@@ -343,6 +363,7 @@ router.get('/stats', [
   const stats = await Order.getOrderStats(
     new Date(startDate),
     new Date(endDate),
+    req.branchId
   );
 
   res.json({
@@ -355,6 +376,8 @@ router.get('/stats', [
 // @access  Private
 router.get('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
   query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status')
@@ -371,7 +394,10 @@ router.get('/', [
   const { page = 1, limit = 10, status } = req.query;
   const skip = (page - 1) * limit;
 
-  let query = { userId: req.user.id || req.user._id || req.user.userId };
+  let query = {
+    branchId: req.branchId,
+    userId: req.user.id || req.user._id || req.user.userId,
+  };
   if (status) query.status = status;
 
 
@@ -407,6 +433,8 @@ router.get('/', [
 // @access  Private
 router.get('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -418,8 +446,7 @@ router.get('/:id', [
     });
   }
 
-  // Single query with full population — no extra lean check needed
-  const order = await Order.findById(req.params.id)
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
       { path: 'items.foodItem', select: 'name imageUrl price description' },
@@ -438,9 +465,10 @@ router.get('/:id', [
 
   const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
   
+const staffRoles = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
 if (
   orderUserId !== currentUserId &&
-  !['admin', 'manager'].includes(req.user.role)
+  !staffRoles.includes(req.user.role)
 ) {
   return res.status(403).json({
     success: false,
@@ -460,6 +488,8 @@ if (
 // @access  Private (Admin/Manager only)
 router.patch('/:id/status', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('status').isIn(['pending', 'confirmed', 'preparing', 'pickup', 'ready', 'shop', 'driverpickup', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
@@ -476,7 +506,7 @@ router.patch('/:id/status', [
 
   const { status, message } = req.body;
 
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({
@@ -507,7 +537,7 @@ router.patch('/:id/status', [
   await order.save();
 
   // Single populate query — no redundant lean check
-  const orderDoc = await Order.findById(req.params.id)
+  const orderDoc = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
       { path: 'items.foodItem', select: 'name imageUrl price description' },
@@ -541,6 +571,8 @@ router.patch('/:id/status', [
 
 router.patch('/:id/cancel', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('reason').trim().notEmpty().withMessage('Cancellation reason is required')
 ], asyncHandler(async (req, res) => {
@@ -550,7 +582,7 @@ router.patch('/:id/cancel', [
   }
 
   const { reason } = req.body;
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({ success: false, message: 'Order not found' });
@@ -559,7 +591,7 @@ router.patch('/:id/cancel', [
   // Authorization
   const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
   const isOwner = order.userId.toString() === currentUserId;
-  const isAdmin = ['admin', 'manager', 'superadmin'].includes(req.user.role);
+  const isAdmin = ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'].includes(req.user.role);
   if (!isOwner && !isAdmin) {
     return res.status(403).json({ success: false, message: 'Not authorized' });
   }
@@ -575,7 +607,7 @@ router.patch('/:id/cancel', [
 
   // Restore stock
   for (const item of order.items) {
-    const foodItem = await FoodItem.findById(item.foodItem);
+    const foodItem = await FoodItem.findOne({ _id: item.foodItem, branchId: req.branchId });
     if (foodItem) {
       await foodItem.updateStock(item.quantity, 'add');
     }
@@ -612,6 +644,8 @@ router.patch('/:id/cancel', [
 // @access  Private
 router.post('/:id/rating', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('food').optional().isInt({ min: 1, max: 5 }).withMessage('Food rating must be between 1 and 5'),
   body('delivery').optional().isInt({ min: 1, max: 5 }).withMessage('Delivery rating must be between 1 and 5'),
@@ -627,7 +661,7 @@ router.post('/:id/rating', [
     });
   }
 
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({

@@ -30,6 +30,7 @@ const bannerRoutes = require('./routes/bannerRoutes');
 const contactRoutes = require('./routes/contact');
 const imageProxyRoutes = require('./routes/imageProxyRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const branchRoutes = require('./routes/branchRoutes');
 
 
 const app = express();
@@ -145,6 +146,7 @@ app.use('/api/v1/addresses', addressesRoutes);
 app.use('/api/v1/banners', addCacheHeaders, bannerRoutes);
 app.use('/api/v1/settings', addCacheHeaders, setting);
 app.use('/api/v1/offer', addCacheHeaders, offers);
+app.use('/api/v1/branches', addCacheHeaders, branchRoutes);
 
 // Image proxy endpoint with caching
 const imageCache = new Map();
@@ -245,6 +247,7 @@ const setupIndexes = async () => {
       'description.ca': 'text',
       'description.ar': 'text'
     });
+    await db.collection('fooditems').createIndex({ branchId: 1, category: 1 });
     await db.collection('fooditems').createIndex({ category: 1 });
     await db.collection('fooditems').createIndex({ isActive: 1 });
     await db.collection('fooditems').createIndex({ isFeatured: 1 });
@@ -257,6 +260,7 @@ const setupIndexes = async () => {
       'name.ca': 'text', 
       'name.ar': 'text'
     });
+    await db.collection('categories').createIndex({ branchId: 1, isActive: 1, sortOrder: 1 });
     await db.collection('categories').createIndex({ isActive: 1 });
     await db.collection('categories').createIndex({ sortOrder: 1 });
     

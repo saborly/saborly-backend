@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 
 const { auth, authorize } = require('../middleware/auth');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const { uploadSingle, uploadMultiple } = require('../middleware/upload.middleware');
 const { deleteLocalFile } = require('../utils/fileHelper');
 
@@ -24,6 +25,8 @@ const { deleteLocalFile } = require('../utils/fileHelper');
 router.post(
   '/image',
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   uploadSingle('image'),
   (req, res) => {
@@ -55,6 +58,8 @@ router.post(
 router.post(
   '/images',
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   uploadMultiple('images', 10),
   (req, res) => {
@@ -88,6 +93,8 @@ router.post(
 router.delete(
   '/image',
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   (req, res) => {
     const { filename, imageUrl } = req.body;

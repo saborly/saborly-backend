@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const offerSchema = new mongoose.Schema({
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
   title: {
     type: String,
     required: [true, 'Offer title is required'],
@@ -41,7 +47,6 @@ const offerSchema = new mongoose.Schema({
   },
   couponCode: {
     type: String,
-    unique: true,
     sparse: true,
     uppercase: true,
     trim: true,
@@ -367,10 +372,11 @@ offerSchema.methods.applyToUser = async function(userId, orderId, discountAmount
 };
 
 // Static method to find valid offers for user with platform and device filter
-offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, platform, deviceId = null) {
+offerSchema.statics.findValidOffersForUser = function(branchId, userId, orderDetails, platform, deviceId = null) {
   const now = new Date();
   
   let query = {
+    branchId,
     isActive: true,
     startDate: { $lte: now },
     endDate: { $gte: now },
@@ -412,8 +418,9 @@ offerSchema.statics.findValidOffersForUser = function(userId, orderDetails, plat
 };
 
 // Static method to find offer by coupon code with device check
-offerSchema.statics.findByCouponCode = function(code, platform, deviceId = null) {
+offerSchema.statics.findByCouponCode = function(branchId, code, platform, deviceId = null) {
   let query = {
+    branchId,
     couponCode: code.toUpperCase(),
     isActive: true,
     startDate: { $lte: new Date() },
@@ -441,5 +448,8 @@ offerSchema.statics.findByCouponCode = function(code, platform, deviceId = null)
     return offer;
   });
 };
+
+offerSchema.index({ branchId: 1, couponCode: 1 }, { unique: true, sparse: true });
+offerSchema.index({ branchId: 1, isActive: 1, startDate: 1, endDate: 1 });
 
 module.exports = mongoose.model('Offer', offerSchema);

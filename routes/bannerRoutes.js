@@ -2,18 +2,77 @@
 const express = require('express');
 const router = express.Router();
 const bannerController = require('../controllers/bannerController');
+const { auth, authorize } = require('../middleware/auth');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
-// Public routes (for Flutter app)
-router.get('/active', bannerController.getActiveBanners);
+router.get(
+  '/active',
+  attachBranchToRequest,
+  resolveBranchContext,
+  bannerController.getActiveBanners
+);
 
+router.get(
+  '/getall',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.getAllBanners
+);
 
-// Admin routes (add authentication middleware as needed)
-router.get('/getall', bannerController.getAllBanners);
-router.get('/:id', bannerController.getBannerById);
-router.post('/', bannerController.createBanner);
-router.put('/:id', bannerController.updateBanner);
-router.delete('/:id', bannerController.deleteBanner);
-router.patch('/:id/toggle-status', bannerController.toggleBannerStatus);
-router.post('/reorder', bannerController.reorderBanners);
+router.get(
+  '/:id',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.getBannerById
+);
+
+router.post(
+  '/',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.createBanner
+);
+
+router.put(
+  '/:id',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.updateBanner
+);
+
+router.delete(
+  '/:id',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.deleteBanner
+);
+
+router.patch(
+  '/:id/toggle-status',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.toggleBannerStatus
+);
+
+router.post(
+  '/reorder',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  bannerController.reorderBanners
+);
 
 module.exports = router;

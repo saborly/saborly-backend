@@ -38,12 +38,17 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: [true, 'Email is required'],
-    unique: true,
     lowercase: true,
     match: [
       /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
       'Please provide a valid email'
     ]
+  },
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: [true, 'Branch is required'],
+    index: true,
   },
   authProvider: {
     type: String,
@@ -79,7 +84,7 @@ phone: {
   addresses: [addressSchema],
   role: {
     type: String,
-    enum: ['user', 'admin', 'manager'],
+    enum: ['user', 'admin', 'manager', 'super_admin', 'branch_admin', 'staff', 'superadmin'],
     default: 'user'
   },
   isActive: {
@@ -198,10 +203,12 @@ userSchema.methods.verifyPasswordResetOTP = function(enteredOTP) {
 // Generate JWT token
 userSchema.methods.generateAuthToken = function() {
   return jwt.sign(
-    { 
+    {
       id: this._id,
+      userId: this._id,
       email: this.email,
-      role: this.role 
+      role: this.role,
+      branchId: this.branchId ? this.branchId.toString() : null,
     },
     process.env.JWT_SECRET,
     {

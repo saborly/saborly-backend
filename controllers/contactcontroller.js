@@ -40,8 +40,8 @@ exports.submitContactForm = async (req, res) => {
     // Check if user is authenticated
     const userId = req.user ? req.user.id : null;
 
-    // Create contact entry
     const contact = await Contact.create({
+      branchId: req.branchId,
       name: name.trim(),
       email: email.toLowerCase().trim(),
       subject: subject.trim(),
@@ -99,14 +99,12 @@ exports.getAllContacts = async (req, res) => {
   try {
     const { status, page = 1, limit = 20, search } = req.query;
 
-    const query = {};
-    
-    // Filter by status
+    const query = { branchId: req.branchId };
+
     if (status && ['pending', 'read', 'replied', 'archived'].includes(status)) {
       query.status = status;
     }
 
-    // Search by name, email, or subject
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
@@ -152,7 +150,7 @@ exports.getAllContacts = async (req, res) => {
  */
 exports.getContactById = async (req, res) => {
   try {
-    const contact = await Contact.findById(req.params.id)
+    const contact = await Contact.findOne({ _id: req.params.id, branchId: req.branchId })
       .populate('userId', 'firstName lastName email phone')
       .populate('repliedBy', 'firstName lastName email');
 
@@ -200,7 +198,7 @@ exports.updateContactStatus = async (req, res) => {
       });
     }
 
-    const contact = await Contact.findById(req.params.id);
+    const contact = await Contact.findOne({ _id: req.params.id, branchId: req.branchId });
 
     if (!contact) {
       return res.status(404).json({
@@ -252,7 +250,7 @@ exports.replyToContact = async (req, res) => {
       });
     }
 
-    const contact = await Contact.findById(req.params.id);
+    const contact = await Contact.findOne({ _id: req.params.id, branchId: req.branchId });
 
     if (!contact) {
       return res.status(404).json({
@@ -295,7 +293,7 @@ exports.replyToContact = async (req, res) => {
  */
 exports.deleteContact = async (req, res) => {
   try {
-    const contact = await Contact.findById(req.params.id);
+    const contact = await Contact.findOne({ _id: req.params.id, branchId: req.branchId });
 
     if (!contact) {
       return res.status(404).json({
@@ -329,6 +327,7 @@ exports.deleteContact = async (req, res) => {
 exports.getContactStats = async (req, res) => {
   try {
     const stats = await Contact.aggregate([
+      { $match: { branchId: req.branchId } },
       {
         $facet: {
           statusCount: [
