@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Branch = require('../models/Branch');
 const asyncHandler = require('./asyncHandler');
-const { normalizeRole, isSuperAdmin } = require('../utils/roles');
+const { normalizeRole, isSuperAdmin, canLoginAnyBranch } = require('../utils/roles');
 
 function readBranchIdFromRequest(req) {
   const h = req.headers['x-branch-id'];
@@ -28,20 +28,33 @@ const attachBranchToRequest = (req, res, next) => {
 
 /**
  * Resolve and validate branch; sets req.branchId (ObjectId) and req.branchDoc.
- * Enforces: branch_admin/staff/user cannot access another branch via header.
+ *
+ * Cross-branch roles (super_admin, superadmin, admin — same set as canLoginAnyBranch):
+ *   - May override the branch via X-Branch-Id header.
+ *   - If no header, fall back to the user's home branchId from the DB.
+ *
+ * Branch-bound roles (staff, user):
+ *   - Must match their account's branchId; any differing header is rejected.
  */
 const resolveBranchContext = asyncHandler(async (req, res, next) => {
   let branchIdStr = req.clientBranchId;
 
   if (req.user) {
-    const role = normalizeRole(req.user.role);
     const ub = userBranchIdString(req.user);
+    const crossBranch = isSuperAdmin(req.user.role) || canLoginAnyBranch(req.user.role);
 
-    if (isSuperAdmin(req.user.role)) {
+    if (crossBranch) {
+      // 1) X-Branch-Id  2) JWT session from login  3) home branch in DB
+      if (!branchIdStr) {
+        const jwtB = req.user.sessionBranchId;
+        if (jwtB && String(jwtB).trim()) branchIdStr = String(jwtB).trim();
+      }
       if (!branchIdStr && ub) branchIdStr = ub;
-    } else if (role === 'branch_admin' || role === 'staff' || role === 'user') {
-      if (!branchIdStr) branchIdStr = ub;
-      else if (ub && branchIdStr !== ub) {
+    } else {
+      // Staff / customer: must stay on their own branch
+      if (!branchIdStr) {
+        branchIdStr = ub;
+      } else if (ub && branchIdStr !== ub) {
         return res.status(403).json({
           success: false,
           message: 'branchId does not match your account scope',
@@ -67,17 +80,6 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
       success: false,
       message: 'Branch not found or inactive',
     });
-  }
-
-  if (req.user && !isSuperAdmin(req.user.role)) {
-    const role = normalizeRole(req.user.role);
-    const ub = userBranchIdString(req.user);
-    if ((role === 'branch_admin' || role === 'staff' || role === 'user') && ub && branchIdStr !== ub) {
-      return res.status(403).json({
-        success: false,
-        message: 'Forbidden for this branch',
-      });
-    }
   }
 
   req.branchId = new mongoose.Types.ObjectId(branchIdStr);

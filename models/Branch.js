@@ -41,6 +41,17 @@ const branchSchema = new mongoose.Schema(
       default: 'Europe/Madrid',
       trim: true,
     },
+    /** WGS84 — optional; used by clients for distance / maps */
+    latitude: {
+      type: Number,
+      min: -90,
+      max: 90,
+    },
+    longitude: {
+      type: Number,
+      min: -180,
+      max: 180,
+    },
     settings: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

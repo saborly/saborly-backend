@@ -14,7 +14,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const branches = await Branch.find({ isActive: true })
       .sort({ name: 1 })
-      .select('name location address currency language timezone isActive')
+      .select('_id name location address currency language timezone isActive latitude longitude')
       .lean();
 
     res.json({ success: true, count: branches.length, branches });
@@ -49,6 +49,8 @@ router.post(
     body('language').optional().trim(),
     body('timezone').optional().trim(),
     body('phone').optional().trim(),
+    body('latitude').optional().isFloat({ min: -90, max: 90 }),
+    body('longitude').optional().isFloat({ min: -180, max: 180 }),
     body('settings').optional().isObject(),
   ],
   asyncHandler(async (req, res) => {
@@ -75,6 +77,8 @@ router.put(
     body('language').optional().trim(),
     body('timezone').optional().trim(),
     body('phone').optional().trim(),
+    body('latitude').optional().isFloat({ min: -90, max: 90 }),
+    body('longitude').optional().isFloat({ min: -180, max: 180 }),
     body('settings').optional(),
     body('isActive').optional().isBoolean(),
   ],

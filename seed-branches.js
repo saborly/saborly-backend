@@ -7,6 +7,57 @@ const mongoose = require('mongoose');
 
 const Branch = require('./models/Branch');
 
+const BARCELONA = {
+  name: 'Saborly — Main (Barcelona)',
+  phone: '+34932112072',
+  location: 'Barcelona, Spain',
+  address: 'Saborly, C/ de Pere IV, 208, Sant Martí, 08005 Barcelona, Spain',
+  latitude: 41.405,
+  longitude: 2.2009,
+};
+
+const SABADELL = {
+  name: 'Saborly — Sabadell',
+  phone: '+34930000000',
+  location: 'Sabadell, Spain',
+  address: 'Sabadell, Vallès Occidental, Spain',
+  latitude: 41.5433,
+  longitude: 2.1093,
+};
+
+async function findOrCreateBranch(def) {
+  let doc = await Branch.findOne({
+    $or: [{ name: def.name }, { phone: def.phone }],
+  });
+  if (!doc) {
+    doc = await Branch.create({
+      name: def.name,
+      location: def.location,
+      address: def.address,
+      phone: def.phone,
+      currency: 'EUR',
+      language: 'es',
+      timezone: 'Europe/Madrid',
+      isActive: true,
+      ...(def.latitude != null && def.longitude != null
+        ? { latitude: def.latitude, longitude: def.longitude }
+        : {}),
+    });
+    console.log('Created branch:', def.name, doc._id.toString());
+  } else if (def.latitude != null && def.longitude != null) {
+    const needsCoords = doc.latitude == null || doc.longitude == null;
+    if (needsCoords) {
+      await Branch.updateOne(
+        { _id: doc._id },
+        { $set: { latitude: def.latitude, longitude: def.longitude } }
+      );
+      doc = await Branch.findById(doc._id);
+      console.log('Updated coordinates for:', def.name);
+    }
+  }
+  return doc;
+}
+
 async function run() {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
@@ -17,44 +68,36 @@ async function run() {
   await mongoose.connect(uri);
   const db = mongoose.connection.db;
 
-  let defaultBranch = await Branch.findOne({ name: 'Saborly — Main (Barcelona)' });
-  if (!defaultBranch) {
-    defaultBranch = await Branch.create({
-      name: 'Saborly — Main (Barcelona)',
-      location: 'Barcelona, Spain',
-      address: 'Saborly, C/ de Pere IV, 208, Sant Martí, 08005 Barcelona, Spain',
-      phone: '+34932112072',
-      currency: 'EUR',
-      language: 'es',
-      timezone: 'Europe/Madrid',
-      isActive: true,
-    });
-    console.log('Created default branch:', defaultBranch._id.toString());
-  }
-
-  let sabadell = await Branch.findOne({ name: 'Saborly — Sabadell' });
-  if (!sabadell) {
-    sabadell = await Branch.create({
-      name: 'Saborly — Sabadell',
-      location: 'Sabadell, Spain',
-      address: 'Sabadell, Vallès Occidental, Spain',
-      phone: '+34930000000',
-      currency: 'EUR',
-      language: 'es',
-      timezone: 'Europe/Madrid',
-      isActive: true,
-    });
-    console.log('Created Sabadell branch:', sabadell._id.toString());
-  }
+  const defaultBranch = await findOrCreateBranch(BARCELONA);
+  await findOrCreateBranch(SABADELL);
 
   const defaultId = defaultBranch._id;
+
+  // offers: unique (branchId, couponCode) — null/missing couponCode would collide for one branch
+  try {
+    const cursor = db.collection('offers').find({
+      $or: [{ branchId: { $exists: false } }, { branchId: null }],
+    });
+    let offerUpdates = 0;
+    for await (const o of cursor) {
+      const set = { branchId: defaultId };
+      const code = o.couponCode;
+      if (code == null || String(code).trim() === '') {
+        set.couponCode = `AUTO${o._id.toString()}`.toUpperCase();
+      }
+      await db.collection('offers').updateOne({ _id: o._id }, { $set: set });
+      offerUpdates += 1;
+    }
+    if (offerUpdates) console.log(`offers: updated ${offerUpdates} documents with branchId`);
+  } catch (e) {
+    console.warn('offers migration:', e.message);
+  }
 
   const collections = [
     'users',
     'categories',
     'fooditems',
     'banners',
-    'offers',
     'contacts',
     'addresses',
     'settings',

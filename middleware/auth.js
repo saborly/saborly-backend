@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const asyncHandler = require('./asyncHandler');
-const { normalizeRole } = require('../utils/roles');
+const { normalizeRole, isSuperAdmin, canLoginAnyBranch } = require('../utils/roles');
 
 // Protect routes - authenticate token
 const auth = asyncHandler(async (req, res, next) => {
@@ -67,6 +67,11 @@ const auth = asyncHandler(async (req, res, next) => {
       });
     }
 
+    const sessionFromToken =
+      decoded.branchId != null && String(decoded.branchId).trim() !== ''
+        ? String(decoded.branchId).trim()
+        : null;
+
     req.user = {
       id: userId.toString(),
       _id: user._id,
@@ -75,6 +80,8 @@ const auth = asyncHandler(async (req, res, next) => {
       role: user.role,
       email: user.email,
       branchId: user.branchId,
+      /** Branch id embedded at login (generateAuthToken(sessionBranchId)) — not the user's home branch in DB */
+      sessionBranchId: sessionFromToken,
     };
     next();
   } catch (error) {
@@ -90,6 +97,21 @@ const authorize = (...roles) => {
   return (req, res, next) => {
     const ur = req.user.role;
     const un = normalizeRole(ur);
+
+    // Org-level roles (super_admin + legacy admin) use the same back-office routes with branch scoping.
+    if (isSuperAdmin(ur) || canLoginAnyBranch(ur)) {
+      const allowsBranchDashboard = roles.some((r) => {
+        const rn = normalizeRole(r);
+        return (
+          r === 'admin' ||
+          rn === 'branch_admin' ||
+          r === 'manager' ||
+          rn === 'staff'
+        );
+      });
+      if (allowsBranchDashboard) return next();
+    }
+
     const allowed = roles.some((r) => {
       const rn = normalizeRole(r);
       if (rn === un) return true;
@@ -130,10 +152,15 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
         const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
         
         if (!lastActivity || lastActivity >= sevenDaysAgo) {
+          const sessionFromToken =
+            decoded.branchId != null && String(decoded.branchId).trim() !== ''
+              ? String(decoded.branchId).trim()
+              : null;
           req.user = {
             ...user,
             id: user._id.toString(),
             branchId: user.branchId,
+            sessionBranchId: sessionFromToken,
           };
           // Update last activity (optimized - only updates if > 1 min since last update)
           const now = new Date();

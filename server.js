@@ -51,7 +51,14 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Language', 'Accept-Language'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Language',
+    'Accept-Language',
+    'X-Branch-Id',
+  ],
   exposedHeaders: ['Content-Language']
 };
 app.use(cors(corsOptions));
@@ -129,8 +136,20 @@ app.get('/health', (req, res) => {
 // Cache headers middleware for GET requests
 const addCacheHeaders = (req, res, next) => {
   if (req.method === 'GET' && !req.path.includes('/auth/')) {
-    // Cache public GET requests for 5 minutes
-    res.set('Cache-Control', 'public, max-age=300');
+    // Branch-scoped/admin responses must never be shared across branches/sessions.
+    // If either Authorization or X-Branch-Id is present, disable HTTP caching.
+    const hasBranchScope = Boolean(req.headers['x-branch-id']);
+    const hasAuth = Boolean(req.headers.authorization);
+    if (hasBranchScope || hasAuth) {
+      res.set('Cache-Control', 'private, no-store, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('Vary', 'Authorization, X-Branch-Id, Accept-Language, Origin');
+    } else {
+      // Public unauthenticated GET requests can be cached briefly.
+      res.set('Cache-Control', 'public, max-age=300');
+      res.set('Vary', 'Accept-Language, Origin');
+    }
   }
   next();
 };

@@ -8,6 +8,7 @@ const Order = require('../models/Order');
 const Address = require('../models/Address');
 const Offer = require('../models/offer');
 const { auth } = require('../middleware/auth');
+const { canLoginAnyBranch } = require('../utils/roles');
 const asyncHandler = require('../middleware/asyncHandler');
 const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
@@ -759,12 +760,19 @@ router.post('/login', [
 
   const { email, password, fcmToken, deviceId, platform } = req.body;
 
-  const user = await User.findOne({ email, branchId: req.branchId }).select('+password');
+  let user = await User.findOne({ email, branchId: req.branchId }).select('+password');
+
+  if (!user) {
+    const candidates = await User.find({ email }).select('+password');
+    const cross = candidates.find((u) => canLoginAnyBranch(u.role));
+    if (cross) user = cross;
+  }
 
   if (!user) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'The email or password is incorrect.',
+      code: 'AUTH_INVALID',
     });
   }
 
@@ -772,17 +780,28 @@ router.post('/login', [
   if (!user.isActive) {
     return res.status(401).json({
       success: false,
-      message: 'Account has been deactivated. Please contact support.'
+      message: 'Account has been deactivated. Please contact support.',
     });
   }
 
-  // Check password
+  // Branch-bound accounts must match the selected branch (org-wide roles handled above)
+  if (!canLoginAnyBranch(user.role)) {
+    if (!user.branchId || user.branchId.toString() !== req.branchId.toString()) {
+      return res.status(401).json({
+        success: false,
+        message: 'The email or password is incorrect.',
+        code: 'AUTH_INVALID',
+      });
+    }
+  }
+
   const isPasswordCorrect = await user.matchPassword(password);
 
   if (!isPasswordCorrect) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'The email or password is incorrect.',
+      code: 'AUTH_INVALID',
     });
   }
 
@@ -801,8 +820,8 @@ router.post('/login', [
     }
   }
 
-  // Generate token
-  const token = user.generateAuthToken();
+  const sessionBranchId = req.branchId.toString();
+  const token = user.generateAuthToken(req.branchId);
 
   // Update last login
   await user.updateLastLogin();
@@ -818,11 +837,12 @@ router.post('/login', [
       email: user.email,
       phone: user.phone,
       role: user.role,
-      branchId: user.branchId,
+      branchId: sessionBranchId,
+      homeBranchId: user.branchId ? user.branchId.toString() : null,
       emailVerified: user.emailVerified,
       phoneVerified: user.phoneVerified,
-      lastLogin: user.lastLogin
-    }
+      lastLogin: user.lastLogin,
+    },
   });
 }));
 

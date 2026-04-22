@@ -205,15 +205,21 @@ userSchema.methods.verifyPasswordResetOTP = function(enteredOTP) {
   return this.resetPasswordOTP === enteredOTP;
 };
 
-// Generate JWT token
-userSchema.methods.generateAuthToken = function() {
+// Generate JWT token (optional sessionBranchId = active store from login header)
+userSchema.methods.generateAuthToken = function(sessionBranchId) {
+  const branchIdStr =
+    sessionBranchId != null && sessionBranchId !== ''
+      ? sessionBranchId.toString()
+      : this.branchId
+        ? this.branchId.toString()
+        : null;
   return jwt.sign(
     {
       id: this._id,
       userId: this._id,
       email: this.email,
       role: this.role,
-      branchId: this.branchId ? this.branchId.toString() : null,
+      branchId: branchIdStr,
     },
     process.env.JWT_SECRET,
     {
