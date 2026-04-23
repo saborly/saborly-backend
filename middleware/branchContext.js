@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Branch = require('../models/Branch');
 const asyncHandler = require('./asyncHandler');
 const { normalizeRole, isSuperAdmin, canLoginAnyBranch } = require('../utils/roles');
+let defaultBranchIdCache = null;
 
 function readBranchIdFromRequest(req) {
   const h = req.headers['x-branch-id'];
@@ -18,6 +19,31 @@ function readBranchIdFromRequest(req) {
 function userBranchIdString(user) {
   if (!user || user.branchId == null) return null;
   return user.branchId.toString ? user.branchId.toString() : String(user.branchId);
+}
+
+async function resolveDefaultBranchId() {
+  if (defaultBranchIdCache && mongoose.Types.ObjectId.isValid(defaultBranchIdCache)) {
+    return defaultBranchIdCache;
+  }
+
+  const defaultBranch = await Branch.findOne({
+    isActive: true,
+    $or: [
+      { name: /barcelona/i },
+      { name: /saborly_main/i },
+      { phone: '+34932112072' },
+      { location: /barcelona/i },
+    ],
+  })
+    .select('_id')
+    .lean();
+
+  if (defaultBranch?._id) {
+    defaultBranchIdCache = defaultBranch._id.toString();
+    return defaultBranchIdCache;
+  }
+
+  return null;
 }
 
 /** Attach raw client branch id (header / body / query) without validating */
@@ -64,10 +90,16 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
   }
 
   if (!branchIdStr) {
-    return res.status(400).json({
-      success: false,
-      message: 'branchId is required (X-Branch-Id header, or branchId in query/body)',
-    });
+    const defaultBranchId = await resolveDefaultBranchId();
+    if (defaultBranchId) {
+      branchIdStr = defaultBranchId;
+    } else {
+      return res.status(400).json({
+        success: false,
+        message:
+          'branchId is required and default Barcelona branch was not found',
+      });
+    }
   }
 
   if (!mongoose.Types.ObjectId.isValid(branchIdStr)) {
