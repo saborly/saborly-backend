@@ -48,7 +48,7 @@ router.post('/', [
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
   body('codPaymentType').optional().isIn(['cash', 'card']).withMessage('Invalid COD payment type'),
-  body('branchId').isMongoId().withMessage('Invalid branch ID'),
+  body('branchId').optional().isMongoId().withMessage('Invalid branch ID'),
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
   body('subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be a positive number'),
   body('total').isFloat({ min: 0 }).withMessage('Total must be a positive number'),
@@ -93,12 +93,14 @@ const {
     });
   }
 
-  if (!branchId || branchId.toString() !== req.branchId.toString()) {
+  if (branchId && branchId.toString() !== req.branchId.toString()) {
     return res.status(400).json({
       success: false,
       message: 'branchId must match the active branch context'
     });
   }
+
+  const effectiveBranchId = branchId || req.branchId;
 
   // Process cart items - fetch all food items in one query (prevents N+1)
   const itemIds = items.map(item => item.foodItem?.id || item.foodItem);
@@ -166,7 +168,7 @@ const {
     paymentMethod,
     deliveryType,
     deliveryAddress,
-    branchId,
+    branchId: effectiveBranchId,
     specialInstructions
   };
 

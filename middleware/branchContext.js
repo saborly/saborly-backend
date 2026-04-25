@@ -77,14 +77,10 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
       }
       if (!branchIdStr && ub) branchIdStr = ub;
     } else {
-      // Staff / customer: must stay on their own branch
-      if (!branchIdStr) {
+      // Staff / customer: always stay on their own branch.
+      // If client sends a different branchId, ignore it instead of hard-failing.
+      if (!branchIdStr || (ub && branchIdStr !== ub)) {
         branchIdStr = ub;
-      } else if (ub && branchIdStr !== ub) {
-        return res.status(403).json({
-          success: false,
-          message: 'branchId does not match your account scope',
-        });
       }
     }
   }
