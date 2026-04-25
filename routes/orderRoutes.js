@@ -93,14 +93,9 @@ const {
     });
   }
 
-  if (branchId && branchId.toString() !== req.branchId.toString()) {
-    return res.status(400).json({
-      success: false,
-      message: 'branchId must match the active branch context'
-    });
-  }
-
-  const effectiveBranchId = branchId || req.branchId;
+  // Always trust backend-resolved branch context to avoid client branch drift.
+  // Any provided body.branchId is treated as optional metadata only.
+  const effectiveBranchId = req.branchId;
 
   // Process cart items - fetch all food items in one query (prevents N+1)
   const itemIds = items.map(item => item.foodItem?.id || item.foodItem);
