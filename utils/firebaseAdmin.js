@@ -28,6 +28,21 @@ const sanitizeData = (data) => {
   return sanitized;
 };
 
+// APNs headers tuned for production delivery through FCM.
+const buildApnsConfig = () => ({
+  headers: {
+    'apns-priority': '10',
+    'apns-push-type': 'alert',
+  },
+  payload: {
+    aps: {
+      sound: 'default',
+      badge: 1,
+      category: 'FLUTTER_NOTIFICATION_CLICK'
+    }
+  }
+});
+
 const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
   try {
     // Log Firebase project info for debugging
@@ -57,13 +72,7 @@ const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
         }
       },
       apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            badge: 1,
-            category: 'FLUTTER_NOTIFICATION_CLICK'
-          }
-        }
+        ...buildApnsConfig()
       },
       webpush: {
         notification: {
@@ -173,13 +182,7 @@ const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = 
         }
       },
       apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            badge: 1,
-            category: 'FLUTTER_NOTIFICATION_CLICK'
-          }
-        }
+        ...buildApnsConfig()
       },
       webpush: {
         notification: {
@@ -269,13 +272,7 @@ const sendNotificationToTopic = async (topic, title, body, data = {}) => {
         }
       },
       apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            badge: 1,
-            category: 'FLUTTER_NOTIFICATION_CLICK'
-          }
-        }
+        ...buildApnsConfig()
       },
       webpush: {
         notification: {
