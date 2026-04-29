@@ -1354,7 +1354,17 @@ router.post('/google-signin-web', [
       });
     }
 
-    let user = await User.findOne({ email, branchId: req.branchId });
+    // Resolve user in a way that is safe for unique googleId constraints:
+    // 1) exact googleId (most reliable)
+    // 2) same email in current branch
+    // 3) same email globally (then migrate/link to current branch)
+    let user = await User.findOne({ googleId });
+    if (!user) {
+      user = await User.findOne({ email, branchId: req.branchId });
+    }
+    if (!user) {
+      user = await User.findOne({ email });
+    }
 
     if (user) {
       if (!user.isActive) {
@@ -1363,6 +1373,16 @@ router.post('/google-signin-web', [
           message: 'Account has been deactivated. Please contact support.'
         });
       }
+
+      // Keep old and new records consistent if account existed before this flow
+      // or was created in another branch/session.
+      if (!user.googleId || user.googleId !== googleId) {
+        user.googleId = googleId;
+      }
+      user.authProvider = 'google';
+      user.emailVerified = user.emailVerified || tokenInfoResponse.data.verified_email || false;
+      user.branchId = req.branchId;
+      await user.save({ validateBeforeSave: false });
 
       if (fcmToken) {
         try {
@@ -1400,17 +1420,27 @@ router.post('/google-signin-web', [
     } else {
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
 
-      user = await User.create({
-        firstName: firstName || 'User',
-        lastName: lastName || '',
-        email,
-        phone: '',
-        password: randomPassword,
-        authProvider: 'google',
-        googleId: googleId,
-        emailVerified: tokenInfoResponse.data.verified_email || false,
-        branchId: req.branchId,
-      });
+      try {
+        user = await User.create({
+          firstName: firstName || 'User',
+          lastName: lastName || '',
+          email,
+          phone: '',
+          password: randomPassword,
+          authProvider: 'google',
+          googleId: googleId,
+          emailVerified: tokenInfoResponse.data.verified_email || false,
+          branchId: req.branchId,
+        });
+      } catch (createError) {
+        // Handle race condition where another request created the user first
+        if (createError?.code === 11000) {
+          user = await User.findOne({ googleId }) || await User.findOne({ email });
+          if (!user) throw createError;
+        } else {
+          throw createError;
+        }
+      }
 
       // Update FCM token if provided
       if (fcmToken) {
