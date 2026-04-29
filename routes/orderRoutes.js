@@ -15,6 +15,79 @@ const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
 
+const normalizeStringValue = (value) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    return value.value || value.id || value.key || value.code || value.name || value.type || '';
+  }
+  return String(value).trim();
+};
+
+const normalizePaymentMethod = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase().replace(/[\s_]/g, '-');
+
+  if (['cashondelivery', 'cash-on-delivery', 'cash-ondelivery', 'cod'].includes(lower)) return 'cashOnDelivery';
+  if (lower === 'cashondelivery') return 'cashOnDelivery';
+  if (lower === 'shop' || lower === 'pay-at-shop') return 'shop';
+  if (['card', 'paypal', 'stripe'].includes(lower)) return lower;
+
+  return raw;
+};
+
+const normalizeDeliveryType = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase();
+  if (lower === 'takeaway') return 'pickup';
+  return raw;
+};
+
+const normalizeCodPaymentType = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase();
+  if (lower === 'cash' || lower === 'card') return lower;
+  return raw;
+};
+
+const normalizeOrderItems = (items) => {
+  if (!Array.isArray(items)) return items;
+
+  return items.map((item) => {
+    if (!item || typeof item !== 'object') return item;
+
+    const normalizedItem = { ...item };
+    const foodItem = item.foodItem;
+
+    if (foodItem && typeof foodItem === 'object') {
+      const foodItemId = foodItem.id || foodItem._id || foodItem.value;
+      if (foodItemId) {
+        normalizedItem.foodItem = { ...foodItem, id: foodItemId };
+      }
+    } else if (foodItem && typeof foodItem === 'string') {
+      normalizedItem.foodItem = { id: foodItem };
+    }
+
+    return normalizedItem;
+  });
+};
+
+const normalizeOrderResponse = (order) => {
+  if (!order) return order;
+  const normalized = typeof order.toObject === 'function' ? order.toObject({ virtuals: true }) : { ...order };
+
+  if (normalized.branchId && typeof normalized.branchId === 'object') {
+    normalized.branch = normalized.branchId;
+    normalized.branchName = normalized.branchName || normalized.branchId.name;
+    normalized.branchId =
+      normalized.branchId._id?.toString?.() ||
+      normalized.branchId.id?.toString?.() ||
+      '';
+  }
+
+  return normalized;
+};
+
 router.get("/test-notify", async (req, res) => {
   try {
     const response = await sendNotificationToDevice(
@@ -42,8 +115,18 @@ router.post('/', [
   auth,
   attachBranchToRequest,
   resolveBranchContext,
+  body('items').customSanitizer(normalizeOrderItems),
+  body('deliveryType').customSanitizer(normalizeDeliveryType),
+  body('paymentMethod').customSanitizer(normalizePaymentMethod),
+  body('codPaymentType').optional().customSanitizer(normalizeCodPaymentType),
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
-  body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
+  body('items.*.foodItem').custom((foodItem) => {
+    const id = foodItem?.id || foodItem?._id || foodItem;
+    if (!id || !String(id).match(/^[a-f\d]{24}$/i)) {
+      throw new Error('Invalid food item ID');
+    }
+    return true;
+  }),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
@@ -239,10 +322,12 @@ const {
     console.error('❌ Error sending notifications:', notificationError);
   }
 
+  const responseOrder = normalizeOrderResponse(order);
+
   res.status(201).json({
     success: true,
     message: 'Order created successfully',
-    order
+    order: responseOrder
   });
 }));
 
@@ -340,7 +425,7 @@ router.get('/getall', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-    orders: orders
+    orders: orders.map(normalizeOrderResponse)
   });
 }));
 router.get('/stats', [
@@ -421,7 +506,7 @@ router.get('/', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-    orders
+    orders: orders.map(normalizeOrderResponse)
   });
 }));
 
@@ -476,7 +561,7 @@ if (
 
   res.json({
     success: true,
-    order
+    order: normalizeOrderResponse(order)
   });
 }));
 
