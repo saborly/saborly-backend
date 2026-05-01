@@ -3,6 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const Setting = require('../models/Setting');
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
 const router = express.Router();
 
@@ -11,13 +12,16 @@ const router = express.Router();
 // @access  Private (Admin/Manager only)
 router.get('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager')
 ], asyncHandler(async (req, res) => {
-  let settings = await Setting.findOne();
+  let settings = await Setting.findOne({ branchId: req.branchId });
   
   // Create default settings if none exist
   if (!settings) {
     settings = await Setting.create({
+      branchId: req.branchId,
       restaurantName: 'My Restaurant',
       contactPhone: '+1234567890',
       contactEmail: 'contact@restaurant.com',
@@ -40,8 +44,8 @@ router.get('/', [
 // @desc    Get public settings (for frontend)
 // @route   GET /api/v1/settings/public
 // @access  Public
-router.get('/public', asyncHandler(async (req, res) => {
-  const settings = await Setting.findOne()
+router.get('/public', attachBranchToRequest, resolveBranchContext, asyncHandler(async (req, res) => {
+  const settings = await Setting.findOne({ branchId: req.branchId })
     .select('-paymentGateways.secretKey -paymentGateways.webhookSecret -emailSettings.smtpPassword -smsSettings.apiSecret');
   
   if (!settings) {
@@ -82,6 +86,8 @@ router.get('/public', asyncHandler(async (req, res) => {
 // @access  Private (Admin/Manager only)
 router.put('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('restaurantName').optional().trim().isLength({ min: 1 }).withMessage('Restaurant name cannot be empty'),
   body('contactPhone').optional().isMobilePhone().withMessage('Please provide a valid phone number'),
@@ -99,16 +105,16 @@ router.put('/', [
     });
   }
 
-  let settings = await Setting.findOne();
+  let settings = await Setting.findOne({ branchId: req.branchId });
   
   if (settings) {
-    settings = await Setting.findOneAndUpdate({}, req.body, { 
+    settings = await Setting.findOneAndUpdate({ branchId: req.branchId }, req.body, { 
       new: true, 
       runValidators: true,
       upsert: false
     });
   } else {
-    settings = await Setting.create(req.body);
+    settings = await Setting.create({ ...req.body, branchId: req.branchId });
   }
 
   res.json({
@@ -123,6 +129,8 @@ router.put('/', [
 // @access  Private (Admin/Manager only)
 router.put('/hours', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('operatingHours').isArray().withMessage('Operating hours must be an array'),
   body('operatingHours.*.day').isIn(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']).withMessage('Invalid day'),
@@ -139,7 +147,7 @@ router.put('/hours', [
   }
 
   const settings = await Setting.findOneAndUpdate(
-    {},
+    { branchId: req.branchId },
     { operatingHours: req.body.operatingHours },
     { new: true, runValidators: true }
   );
@@ -156,6 +164,8 @@ router.put('/hours', [
 // @access  Private (Admin/Manager only)
 router.post('/delivery-zones', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('name').trim().notEmpty().withMessage('Zone name is required'),
   body('deliveryFee').isFloat({ min: 0 }).withMessage('Delivery fee must be non-negative'),
@@ -170,7 +180,7 @@ router.post('/delivery-zones', [
     });
   }
 
-  const settings = await Setting.findOne();
+  const settings = await Setting.findOne({ branchId: req.branchId });
   settings.deliveryZones.push(req.body);
   await settings.save();
 
@@ -186,6 +196,8 @@ router.post('/delivery-zones', [
 // @access  Private (Admin only)
 router.patch('/maintenance', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   body('isEnabled').isBoolean().withMessage('isEnabled must be boolean'),
   body('message').optional().trim()
@@ -200,7 +212,7 @@ router.patch('/maintenance', [
   }
 
   const settings = await Setting.findOneAndUpdate(
-    {},
+    { branchId: req.branchId },
     { 
       'maintenanceMode.isEnabled': req.body.isEnabled,
       ...(req.body.message && { 'maintenanceMode.message': req.body.message })
@@ -216,6 +228,8 @@ router.patch('/maintenance', [
 }));
 router.patch('/delivery/toggle', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('isEnabled').isBoolean().withMessage('isEnabled must be boolean'),
   body('disabledMessage').optional().trim().isLength({ max: 200 })
@@ -230,7 +244,7 @@ router.patch('/delivery/toggle', [
     });
   }
 
-  const settings = await Setting.findOne();
+  const settings = await Setting.findOne({ branchId: req.branchId });
   
   if (!settings) {
     return res.status(404).json({
@@ -261,6 +275,8 @@ router.patch('/delivery/toggle', [
 // @access  Private (Admin/Manager only)
 router.patch('/delivery', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   body('isDeliveryEnabled').optional().isBoolean(),
   body('defaultDeliveryFee').optional().isFloat({ min: 0 }),
@@ -278,7 +294,7 @@ router.patch('/delivery', [
     });
   }
 
-  const settings = await Setting.findOne();
+  const settings = await Setting.findOne({ branchId: req.branchId });
   
   if (!settings) {
     return res.status(404).json({

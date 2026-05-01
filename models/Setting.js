@@ -146,6 +146,13 @@ const taxSettingsSchema = new mongoose.Schema({
 });
 
 const settingSchema = new mongoose.Schema({
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    unique: true,
+    index: true,
+  },
   // Basic Restaurant Information
   restaurantName: {
     type: String,

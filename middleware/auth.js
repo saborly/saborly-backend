@@ -1,7 +1,7 @@
- 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const asyncHandler = require('./asyncHandler');
+const { normalizeRole, isSuperAdmin, canLoginAnyBranch } = require('../utils/roles');
 
 // Protect routes - authenticate token
 const auth = asyncHandler(async (req, res, next) => {
@@ -25,7 +25,8 @@ const auth = asyncHandler(async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if user still exists (use lean() and select only needed fields for better performance)
-    const user = await User.findById(decoded.id).select('isActive lastActivity role email').lean();
+    const userId = decoded.userId || decoded.id;
+    const user = await User.findById(userId).select('isActive lastActivity role email branchId').lean();
     
     if (!user) {
       return res.status(401).json({
@@ -59,21 +60,28 @@ const auth = asyncHandler(async (req, res, next) => {
     const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
     if (!lastActivity || (now - lastActivity) > 60000) {
       User.updateOne(
-        { _id: decoded.id },
+        { _id: userId },
         { $set: { lastActivity: now } }
       ).catch(() => {
         // Silently fail - don't log to avoid spam
       });
     }
 
-    // Set req.user with id property for consistency (use decoded.id from token)
+    const sessionFromToken =
+      decoded.branchId != null && String(decoded.branchId).trim() !== ''
+        ? String(decoded.branchId).trim()
+        : null;
+
     req.user = {
-      id: decoded.id,
+      id: userId.toString(),
       _id: user._id,
       isActive: user.isActive,
       lastActivity: user.lastActivity,
       role: user.role,
-      email: user.email
+      email: user.email,
+      branchId: user.branchId,
+      /** Branch id embedded at login (generateAuthToken(sessionBranchId)) — not the user's home branch in DB */
+      sessionBranchId: sessionFromToken,
     };
     next();
   } catch (error) {
@@ -87,10 +95,36 @@ const auth = asyncHandler(async (req, res, next) => {
 // Grant access to specific roles
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const ur = req.user.role;
+    const un = normalizeRole(ur);
+
+    // Org-level roles (super_admin + legacy admin) use the same back-office routes with branch scoping.
+    if (isSuperAdmin(ur) || canLoginAnyBranch(ur)) {
+      const allowsBranchDashboard = roles.some((r) => {
+        const rn = normalizeRole(r);
+        return (
+          r === 'admin' ||
+          rn === 'branch_admin' ||
+          r === 'manager' ||
+          rn === 'staff'
+        );
+      });
+      if (allowsBranchDashboard) return next();
+    }
+
+    const allowed = roles.some((r) => {
+      const rn = normalizeRole(r);
+      if (rn === un) return true;
+      if (r === ur) return true;
+      if ((r === 'admin' || rn === 'branch_admin') && (ur === 'admin' || un === 'branch_admin')) return true;
+      if ((r === 'manager' || rn === 'staff') && (ur === 'manager' || un === 'staff')) return true;
+      if ((r === 'superadmin' || rn === 'super_admin') && (ur === 'superadmin' || un === 'super_admin')) return true;
+      return false;
+    });
+    if (!allowed) {
       return res.status(403).json({
         success: false,
-        message: `User role ${req.user.role} is not authorized to access this route`
+        message: `User role ${req.user.role} is not authorized to access this route`,
       });
     }
     next();
@@ -108,7 +142,8 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.id).select('isActive lastActivity').lean();
+      const oid = decoded.userId || decoded.id;
+      const user = await User.findById(oid).select('isActive lastActivity branchId role email').lean();
       
       if (user && user.isActive) {
         // Check inactivity for optional auth too
@@ -117,7 +152,16 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
         const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
         
         if (!lastActivity || lastActivity >= sevenDaysAgo) {
-          req.user = user;
+          const sessionFromToken =
+            decoded.branchId != null && String(decoded.branchId).trim() !== ''
+              ? String(decoded.branchId).trim()
+              : null;
+          req.user = {
+            ...user,
+            id: user._id.toString(),
+            branchId: user.branchId,
+            sessionBranchId: sessionFromToken,
+          };
           // Update last activity (optimized - only updates if > 1 min since last update)
           const now = new Date();
           if (!lastActivity || (now - lastActivity) > 60000) {

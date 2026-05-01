@@ -8,7 +8,9 @@ const Order = require('../models/Order');
 const Address = require('../models/Address');
 const Offer = require('../models/offer');
 const { auth } = require('../middleware/auth');
+const { canLoginAnyBranch } = require('../utils/roles');
 const asyncHandler = require('../middleware/asyncHandler');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
 const { OAuth2Client } = require('google-auth-library');
 const appleSignin = require('apple-signin-auth');
@@ -36,6 +38,8 @@ setInterval(() => {
 // @route   POST /api/v1/auth/register
 // @access  Public
 router.post('/register', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('firstName')
     .trim()
     .notEmpty()
@@ -70,9 +74,9 @@ router.post('/register', [
 
   const { firstName, lastName, email, phone, password } = req.body;
 
-  // Check if user already exists
-  const existingUser = await User.findOne({ 
-    $or: [{ email }, { phone }] 
+  const existingUser = await User.findOne({
+    branchId: req.branchId,
+    $or: [{ email }, { phone }]
   });
 
   if (existingUser) {
@@ -101,7 +105,8 @@ router.post('/register', [
     password: hashedPassword,
     otp,
     otpExpire,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    branchId: req.branchId.toString(),
   });
 
   // Send OTP email
@@ -130,6 +135,8 @@ router.post('/register', [
 // @route   POST /api/v1/auth/verify-registration
 // @access  Public
 router.post('/verify-registration', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -185,9 +192,17 @@ router.post('/verify-registration', [
     });
   }
 
+  if (pendingData.branchId !== req.branchId.toString()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Branch mismatch for this registration session',
+    });
+  }
+
   // Check again if user was created in the meantime
-  const existingUser = await User.findOne({ 
-    $or: [{ email: pendingData.email }, { phone: pendingData.phone }] 
+  const existingUser = await User.findOne({
+    branchId: req.branchId,
+    $or: [{ email: pendingData.email }, { phone: pendingData.phone }]
   });
 
   if (existingUser) {
@@ -205,7 +220,8 @@ router.post('/verify-registration', [
     email: pendingData.email,
     phone: pendingData.phone,
     password: pendingData.password,
-    emailVerified: true // Mark as verified since OTP was confirmed
+    emailVerified: true,
+    branchId: req.branchId,
   });
 
   // Remove from pending registrations
@@ -311,6 +327,8 @@ router.post('/resend-registration-otp', [
 // @route   POST /api/v1/auth/google-signin
 // @access  Public
 router.post('/google-signin', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('idToken')
     .notEmpty()
     .withMessage('Google ID token is required'),
@@ -373,8 +391,7 @@ router.post('/google-signin', [
       email_verified: emailVerified
     } = payload;
 
-    // Check if user exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ email, branchId: req.branchId });
 
     if (user) {
       // User exists - log them in
@@ -442,6 +459,7 @@ router.post('/google-signin', [
         emailVerified: emailVerified || false,
         authProvider: 'google',
         googleId: googleId,
+        branchId: req.branchId,
       });
 
       // Update FCM token if provided
@@ -689,6 +707,8 @@ router.post('/apple-signin', [
 // @route   POST /api/v1/auth/login
 // @access  Public
 router.post('/login', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -717,13 +737,19 @@ router.post('/login', [
 
   const { email, password, fcmToken, deviceId, platform } = req.body;
 
-  // Find user and include password field
-  const user = await User.findOne({ email }).select('+password');
+  let user = await User.findOne({ email, branchId: req.branchId }).select('+password');
+
+  if (!user) {
+    const candidates = await User.find({ email }).select('+password');
+    const cross = candidates.find((u) => canLoginAnyBranch(u.role));
+    if (cross) user = cross;
+  }
 
   if (!user) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'The email or password is incorrect.',
+      code: 'AUTH_INVALID',
     });
   }
 
@@ -731,17 +757,28 @@ router.post('/login', [
   if (!user.isActive) {
     return res.status(401).json({
       success: false,
-      message: 'Account has been deactivated. Please contact support.'
+      message: 'Account has been deactivated. Please contact support.',
     });
   }
 
-  // Check password
+  // Branch-bound accounts must match the selected branch (org-wide roles handled above)
+  if (!canLoginAnyBranch(user.role)) {
+    if (!user.branchId || user.branchId.toString() !== req.branchId.toString()) {
+      return res.status(401).json({
+        success: false,
+        message: 'The email or password is incorrect.',
+        code: 'AUTH_INVALID',
+      });
+    }
+  }
+
   const isPasswordCorrect = await user.matchPassword(password);
 
   if (!isPasswordCorrect) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'The email or password is incorrect.',
+      code: 'AUTH_INVALID',
     });
   }
 
@@ -760,8 +797,8 @@ router.post('/login', [
     }
   }
 
-  // Generate token
-  const token = user.generateAuthToken();
+  const sessionBranchId = req.branchId.toString();
+  const token = user.generateAuthToken(req.branchId);
 
   // Update last login
   await user.updateLastLogin();
@@ -777,17 +814,19 @@ router.post('/login', [
       email: user.email,
       phone: user.phone,
       role: user.role,
+      branchId: sessionBranchId,
+      homeBranchId: user.branchId ? user.branchId.toString() : null,
       emailVerified: user.emailVerified,
       phoneVerified: user.phoneVerified,
-      lastLogin: user.lastLogin
-    }
+      lastLogin: user.lastLogin,
+    },
   });
 }));
 
 // @desc    Get current user profile
 // @route   GET /api/v1/auth/profile
 // @access  Private
-router.get('/profile', auth, asyncHandler(async (req, res) => {
+router.get('/profile', auth, attachBranchToRequest, resolveBranchContext, asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select('-password');
   
   if (!user) {
@@ -808,6 +847,8 @@ router.get('/profile', auth, asyncHandler(async (req, res) => {
 // @access  Private
 router.patch('/profile', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   body('firstName')
     .optional()
     .trim()
@@ -835,9 +876,10 @@ router.patch('/profile', [
   const { firstName, lastName, phone } = req.body;
 
   if (phone) {
-    const existingUser = await User.findOne({ 
-      phone, 
-      _id: { $ne: req.user.id } 
+    const existingUser = await User.findOne({
+      phone,
+      branchId: req.branchId,
+      _id: { $ne: req.user.id }
     });
     
     if (existingUser) {
@@ -929,7 +971,7 @@ router.post('/logout', auth, asyncHandler(async (req, res) => {
 // @desc    Delete user account
 // @route   DELETE /api/v1/auth/account
 // @access  Private
-router.delete('/account', auth, asyncHandler(async (req, res) => {
+router.delete('/account', auth, attachBranchToRequest, resolveBranchContext, asyncHandler(async (req, res) => {
   try {
     console.log('Delete account request received for user:', req.user.id);
     const userId = req.user.id;
@@ -951,13 +993,13 @@ router.delete('/account', auth, asyncHandler(async (req, res) => {
     };
 
     // 1. Delete all user addresses
-    const deletedAddresses = await Address.deleteMany({ userId: userIdObject });
+    const deletedAddresses = await Address.deleteMany({ userId: userIdObject, branchId: req.branchId });
     cleanupResults.addresses = deletedAddresses.deletedCount;
     console.log(`Deleted ${cleanupResults.addresses} addresses for user ${userId}`);
 
     // 2. Anonymize orders (keep for business records but remove personal info)
     const anonymizedOrders = await Order.updateMany(
-      { userId: userIdObject },
+      { userId: userIdObject, branchId: req.branchId },
       {
         $set: {
           'deliveryAddress.address': '[Deleted User]',
@@ -985,7 +1027,7 @@ router.delete('/account', auth, asyncHandler(async (req, res) => {
     try {
       const FoodItem = mongoose.model('FoodItem');
       const reviewsResult = await FoodItem.updateMany(
-        { 'reviews.user': userIdObject },
+        { branchId: req.branchId, 'reviews.user': userIdObject },
         { $pull: { reviews: { user: userIdObject } } }
       );
       cleanupResults.reviewsAnonymized = reviewsResult.modifiedCount || 0;
@@ -1025,6 +1067,8 @@ router.delete('/account', auth, asyncHandler(async (req, res) => {
 // @route   POST /api/v1/auth/forgot-password
 // @access  Public
 router.post('/forgot-password', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -1041,7 +1085,7 @@ router.post('/forgot-password', [
 
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email, branchId: req.branchId });
 
   if (!user) {
     return res.status(200).json({
@@ -1077,6 +1121,8 @@ router.post('/forgot-password', [
 // @route   POST /api/v1/auth/verify-reset-otp
 // @access  Public
 router.post('/verify-reset-otp', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -1098,7 +1144,7 @@ router.post('/verify-reset-otp', [
 
 
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email, branchId: req.branchId });
 
   if (!user) {
     return res.status(404).json({
@@ -1106,10 +1152,6 @@ router.post('/verify-reset-otp', [
       message: 'User not found'
     });
   }
-
-
-
-
 
   const isValidOTP = user.verifyPasswordResetOTP(otp);
 
@@ -1172,7 +1214,17 @@ router.post('/reset-password', [
       });
     }
 
-    const user = await User.findOne({ email }).select('+password');
+    if (!decoded.branchId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid reset token (missing branch)',
+      });
+    }
+
+    const user = await User.findOne({
+      email,
+      branchId: decoded.branchId,
+    }).select('+password');
 
     if (!user) {
       return res.status(404).json({
@@ -1229,6 +1281,8 @@ router.post('/reset-password', [
 // @route   POST /api/v1/auth/google-signin-web
 // @access  Public
 router.post('/google-signin-web', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -1277,11 +1331,19 @@ router.post('/google-signin-web', [
       });
     }
 
-    // Check if user exists
-    let user = await User.findOne({ email });
+    // Resolve user in a way that is safe for unique googleId constraints:
+    // 1) exact googleId (most reliable)
+    // 2) same email in current branch
+    // 3) same email globally (then migrate/link to current branch)
+    let user = await User.findOne({ googleId });
+    if (!user) {
+      user = await User.findOne({ email, branchId: req.branchId });
+    }
+    if (!user) {
+      user = await User.findOne({ email });
+    }
 
     if (user) {
-      // User exists - log them in
       if (!user.isActive) {
         return res.status(401).json({
           success: false,
@@ -1289,7 +1351,16 @@ router.post('/google-signin-web', [
         });
       }
 
-      // Update FCM token if provided
+      // Keep old and new records consistent if account existed before this flow
+      // or was created in another branch/session.
+      if (!user.googleId || user.googleId !== googleId) {
+        user.googleId = googleId;
+      }
+      user.authProvider = 'google';
+      user.emailVerified = user.emailVerified || tokenInfoResponse.data.verified_email || false;
+      user.branchId = req.branchId;
+      await user.save({ validateBeforeSave: false });
+
       if (fcmToken) {
         try {
           await user.updateFCMToken(
@@ -1300,7 +1371,6 @@ router.post('/google-signin-web', [
           console.log('✅ FCM token updated during Google Web sign-in for:', email);
         } catch (error) {
           console.error('⚠️ Failed to update FCM token during Google Web sign-in:', error.message);
-          // Don't fail login if FCM token update fails
         }
       }
 
@@ -1325,19 +1395,29 @@ router.post('/google-signin-web', [
         }
       });
     } else {
-      // User doesn't exist - create new account
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
 
-      user = await User.create({
-        firstName: firstName || 'User',
-        lastName: lastName || '',
-        email,
-        phone: '',
-        password: randomPassword,
-        authProvider: 'google',
-        googleId: googleId,
-        emailVerified: tokenInfoResponse.data.verified_email || false,
-      });
+      try {
+        user = await User.create({
+          firstName: firstName || 'User',
+          lastName: lastName || '',
+          email,
+          phone: '',
+          password: randomPassword,
+          authProvider: 'google',
+          googleId: googleId,
+          emailVerified: tokenInfoResponse.data.verified_email || false,
+          branchId: req.branchId,
+        });
+      } catch (createError) {
+        // Handle race condition where another request created the user first
+        if (createError?.code === 11000) {
+          user = await User.findOne({ googleId }) || await User.findOne({ email });
+          if (!user) throw createError;
+        } else {
+          throw createError;
+        }
+      }
 
       // Update FCM token if provided
       if (fcmToken) {
@@ -1395,6 +1475,8 @@ router.post('/google-signin-web', [
 // @route   POST /api/v1/auth/resend-reset-otp
 // @access  Public
 router.post('/resend-reset-otp', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -1411,7 +1493,7 @@ router.post('/resend-reset-otp', [
 
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email, branchId: req.branchId });
 
   if (!user) {
     return res.status(200).json({

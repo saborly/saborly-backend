@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const addressSchema = new mongoose.Schema({
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -46,7 +52,7 @@ const addressSchema = new mongoose.Schema({
 addressSchema.pre('save', async function(next) {
   if (this.isDefault) {
     await mongoose.model('Address').updateMany(
-      { userId: this.userId, _id: { $ne: this._id } },
+      { branchId: this.branchId, userId: this.userId, _id: { $ne: this._id } },
       { $set: { isDefault: false } }
     );
   }
@@ -54,6 +60,6 @@ addressSchema.pre('save', async function(next) {
 });
 
 // Index for faster queries
-addressSchema.index({ userId: 1, isDefault: -1 });
+addressSchema.index({ branchId: 1, userId: 1, isDefault: -1 });
 
 module.exports = mongoose.model('Address', addressSchema);

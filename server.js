@@ -30,6 +30,7 @@ const bannerRoutes = require('./routes/bannerRoutes');
 const contactRoutes = require('./routes/contact');
 const imageProxyRoutes = require('./routes/imageProxyRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const branchRoutes = require('./routes/branchRoutes');
 
 
 const app = express();
@@ -50,7 +51,14 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Language', 'Accept-Language'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Language',
+    'Accept-Language',
+    'X-Branch-Id',
+  ],
   exposedHeaders: ['Content-Language']
 };
 app.use(cors(corsOptions));
@@ -128,8 +136,20 @@ app.get('/health', (req, res) => {
 // Cache headers middleware for GET requests
 const addCacheHeaders = (req, res, next) => {
   if (req.method === 'GET' && !req.path.includes('/auth/')) {
-    // Cache public GET requests for 5 minutes
-    res.set('Cache-Control', 'public, max-age=300');
+    // Branch-scoped/admin responses must never be shared across branches/sessions.
+    // If either Authorization or X-Branch-Id is present, disable HTTP caching.
+    const hasBranchScope = Boolean(req.headers['x-branch-id']);
+    const hasAuth = Boolean(req.headers.authorization);
+    if (hasBranchScope || hasAuth) {
+      res.set('Cache-Control', 'private, no-store, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('Vary', 'Authorization, X-Branch-Id, Accept-Language, Origin');
+    } else {
+      // Public unauthenticated GET requests can be cached briefly.
+      res.set('Cache-Control', 'public, max-age=300');
+      res.set('Vary', 'Accept-Language, Origin');
+    }
   }
   next();
 };
@@ -145,6 +165,7 @@ app.use('/api/v1/addresses', addressesRoutes);
 app.use('/api/v1/banners', addCacheHeaders, bannerRoutes);
 app.use('/api/v1/settings', addCacheHeaders, setting);
 app.use('/api/v1/offer', addCacheHeaders, offers);
+app.use('/api/v1/branches', addCacheHeaders, branchRoutes);
 
 // Image proxy endpoint with caching
 const imageCache = new Map();
@@ -245,6 +266,7 @@ const setupIndexes = async () => {
       'description.ca': 'text',
       'description.ar': 'text'
     });
+    await db.collection('fooditems').createIndex({ branchId: 1, category: 1 });
     await db.collection('fooditems').createIndex({ category: 1 });
     await db.collection('fooditems').createIndex({ isActive: 1 });
     await db.collection('fooditems').createIndex({ isFeatured: 1 });
@@ -257,6 +279,7 @@ const setupIndexes = async () => {
       'name.ca': 'text',
       'name.ar': 'text'
     });
+    await db.collection('categories').createIndex({ branchId: 1, isActive: 1, sortOrder: 1 });
     await db.collection('categories').createIndex({ isActive: 1 });
     await db.collection('categories').createIndex({ sortOrder: 1 });
 

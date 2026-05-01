@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const contactSchema = new mongoose.Schema({
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
   name: {
     type: String,
     required: [true, 'Name is required'],
@@ -60,9 +66,9 @@ const contactSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
-contactSchema.index({ email: 1, createdAt: -1 });
-contactSchema.index({ status: 1 });
-contactSchema.index({ createdAt: -1 });
+contactSchema.index({ branchId: 1, email: 1, createdAt: -1 });
+contactSchema.index({ branchId: 1, status: 1 });
+contactSchema.index({ branchId: 1, createdAt: -1 });
 
 // Virtual for formatted date
 contactSchema.virtual('formattedDate').get(function() {

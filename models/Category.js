@@ -31,7 +31,13 @@ name: {
   sortOrder: {
     type: Number,
     default: 0
-  }
+  },
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -46,7 +52,7 @@ categorySchema.virtual('itemsCount', {
   count: true
 });
 
-categorySchema.index({ isActive: 1, sortOrder: 1 });
+categorySchema.index({ branchId: 1, isActive: 1, sortOrder: 1 });
 // Updated index to include French
 categorySchema.index({ 
   'name.en': 'text', 
@@ -171,6 +177,12 @@ const foodItemSchema = new mongoose.Schema({
     ref: 'Category',
     required: [true, 'Category is required']
   },
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
+    required: true,
+    index: true,
+  },
   tags: [{
     type: multilingualTextSchema
   }],
@@ -248,12 +260,10 @@ const foodItemSchema = new mongoose.Schema({
   weight: Number,
   sku: {
     type: String,
-    unique: true,
     sparse: true
   },
   barcode: {
     type: String,
-    unique: true,
     sparse: true
   },
   stockQuantity: {
@@ -417,6 +427,9 @@ foodItemSchema.virtual('availabilityStatus').get(function() {
 });
 
 // Indexes for better performance
+foodItemSchema.index({ branchId: 1, category: 1, isActive: 1 });
+foodItemSchema.index({ branchId: 1, sku: 1 }, { unique: true, sparse: true });
+foodItemSchema.index({ branchId: 1, barcode: 1 }, { unique: true, sparse: true });
 foodItemSchema.index({ category: 1, isActive: 1 });
 foodItemSchema.index({ isFeatured: 1, isActive: 1 });
 foodItemSchema.index({ isPopular: 1, isActive: 1 });

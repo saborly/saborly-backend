@@ -7,12 +7,86 @@ const User = require('../models/User');
 
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const Branch =require('../models/Branch');
+const Branch = require('../models/Branch');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const router = express.Router();
 const { sendOrderStatusNotification, sendNewOrderNotification } = require('../utils/notificationService');
 const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
+
+const normalizeStringValue = (value) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    return value.value || value.id || value.key || value.code || value.name || value.type || '';
+  }
+  return String(value).trim();
+};
+
+const normalizePaymentMethod = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase().replace(/[\s_]/g, '-');
+
+  if (['cashondelivery', 'cash-on-delivery', 'cash-ondelivery', 'cod'].includes(lower)) return 'cashOnDelivery';
+  if (lower === 'cashondelivery') return 'cashOnDelivery';
+  if (lower === 'shop' || lower === 'pay-at-shop') return 'shop';
+  if (['card', 'paypal', 'stripe'].includes(lower)) return lower;
+
+  return raw;
+};
+
+const normalizeDeliveryType = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase();
+  if (lower === 'takeaway') return 'pickup';
+  return raw;
+};
+
+const normalizeCodPaymentType = (value) => {
+  const raw = normalizeStringValue(value);
+  const lower = (raw || '').toLowerCase();
+  if (lower === 'cash' || lower === 'card') return lower;
+  return raw;
+};
+
+const normalizeOrderItems = (items) => {
+  if (!Array.isArray(items)) return items;
+
+  return items.map((item) => {
+    if (!item || typeof item !== 'object') return item;
+
+    const normalizedItem = { ...item };
+    const foodItem = item.foodItem;
+
+    if (foodItem && typeof foodItem === 'object') {
+      const foodItemId = foodItem.id || foodItem._id || foodItem.value;
+      if (foodItemId) {
+        normalizedItem.foodItem = { ...foodItem, id: foodItemId };
+      }
+    } else if (foodItem && typeof foodItem === 'string') {
+      normalizedItem.foodItem = { id: foodItem };
+    }
+
+    return normalizedItem;
+  });
+};
+
+const normalizeOrderResponse = (order) => {
+  if (!order) return order;
+  const normalized = typeof order.toObject === 'function' ? order.toObject({ virtuals: true }) : { ...order };
+
+  if (normalized.branchId && typeof normalized.branchId === 'object') {
+    normalized.branch = normalized.branchId;
+    normalized.branchName = normalized.branchName || normalized.branchId.name;
+    normalized.branchId =
+      normalized.branchId._id?.toString?.() ||
+      normalized.branchId.id?.toString?.() ||
+      '';
+  }
+
+  return normalized;
+};
 
 router.get("/test-notify", async (req, res) => {
   try {
@@ -39,13 +113,25 @@ router.get("/test-notify", async (req, res) => {
 // @access  Private
 router.post('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  body('items').customSanitizer(normalizeOrderItems),
+  body('deliveryType').customSanitizer(normalizeDeliveryType),
+  body('paymentMethod').customSanitizer(normalizePaymentMethod),
+  body('codPaymentType').optional().customSanitizer(normalizeCodPaymentType),
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
-  body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
+  body('items.*.foodItem').custom((foodItem) => {
+    const id = foodItem?.id || foodItem?._id || foodItem;
+    if (!id || !String(id).match(/^[a-f\d]{24}$/i)) {
+      throw new Error('Invalid food item ID');
+    }
+    return true;
+  }),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
   body('codPaymentType').optional().isIn(['cash', 'card']).withMessage('Invalid COD payment type'),
-  body('branchId').isMongoId().withMessage('Invalid branch ID'),
+  body('branchId').optional().isMongoId().withMessage('Invalid branch ID'),
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
   body('subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be a positive number'),
   body('total').isFloat({ min: 0 }).withMessage('Total must be a positive number'),
@@ -90,9 +176,13 @@ const {
     });
   }
 
+  // Always trust backend-resolved branch context to avoid client branch drift.
+  // Any provided body.branchId is treated as optional metadata only.
+  const effectiveBranchId = req.branchId;
+
   // Process cart items - fetch all food items in one query (prevents N+1)
   const itemIds = items.map(item => item.foodItem?.id || item.foodItem);
-  const foodItems = await FoodItem.find({ _id: { $in: itemIds } });
+  const foodItems = await FoodItem.find({ _id: { $in: itemIds }, branchId: req.branchId });
   const foodItemMap = Object.fromEntries(foodItems.map(f => [f._id.toString(), f]));
 
   let processedItems = [];
@@ -156,7 +246,7 @@ const {
     paymentMethod,
     deliveryType,
     deliveryAddress,
-    branchId,
+    branchId: effectiveBranchId,
     specialInstructions
   };
 
@@ -188,10 +278,14 @@ const {
     }
 
     // 2. Send notification to ALL admins and managers
-    const adminUsers = await User.find({ 
-      role: { $in: ['admin', 'manager', 'superadmin'] },
+    const adminUsers = await User.find({
+      role: { $in: ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'] },
       isActive: true,
-      fcmToken: { $exists: true, $ne: null }
+      fcmToken: { $exists: true, $ne: null },
+      $or: [
+        { branchId: order.branchId },
+        { role: { $in: ['superadmin', 'super_admin'] } },
+      ],
     }).select('firstName lastName email fcmToken fcmTokens');
 
     if (adminUsers.length > 0) {
@@ -228,10 +322,12 @@ const {
     console.error('❌ Error sending notifications:', notificationError);
   }
 
+  const responseOrder = normalizeOrderResponse(order);
+
   res.status(201).json({
     success: true,
     message: 'Order created successfully',
-    order
+    order: responseOrder
   });
 }));
 
@@ -241,6 +337,9 @@ const {
 
 router.get('/getall', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
   query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
@@ -258,7 +357,7 @@ router.get('/getall', [
   const { page = 1, limit = 10, status, search } = req.query;
   const skip = (page - 1) * limit;
 
-  let queryFilter = {};
+  let queryFilter = { branchId: req.branchId };
   if (status) queryFilter.status = status;
 
   // Handle search - need to search in User collection for customer name
@@ -268,6 +367,7 @@ router.get('/getall', [
 
     // First, find matching users
     const matchingUsers = await User.find({
+      branchId: req.branchId,
       $or: [
         { firstName: searchRegex },
         { lastName: searchRegex },
@@ -325,11 +425,13 @@ router.get('/getall', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-    orders: orders
+    orders: orders.map(normalizeOrderResponse)
   });
 }));
 router.get('/stats', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
 
 ], asyncHandler(async (req, res) => {
@@ -343,6 +445,7 @@ router.get('/stats', [
   const stats = await Order.getOrderStats(
     new Date(startDate),
     new Date(endDate),
+    req.branchId
   );
 
   res.json({
@@ -355,6 +458,8 @@ router.get('/stats', [
 // @access  Private
 router.get('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
   query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status')
@@ -371,7 +476,10 @@ router.get('/', [
   const { page = 1, limit = 10, status } = req.query;
   const skip = (page - 1) * limit;
 
-  let query = { userId: req.user.id || req.user._id || req.user.userId };
+  let query = {
+    branchId: req.branchId,
+    userId: req.user.id || req.user._id || req.user.userId,
+  };
   if (status) query.status = status;
 
 
@@ -398,7 +506,7 @@ router.get('/', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-    orders
+    orders: orders.map(normalizeOrderResponse)
   });
 }));
 
@@ -407,6 +515,8 @@ router.get('/', [
 // @access  Private
 router.get('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -418,8 +528,7 @@ router.get('/:id', [
     });
   }
 
-  // Single query with full population — no extra lean check needed
-  const order = await Order.findById(req.params.id)
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
       { path: 'items.foodItem', select: 'name imageUrl price description' },
@@ -438,9 +547,10 @@ router.get('/:id', [
 
   const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
   
+const staffRoles = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
 if (
   orderUserId !== currentUserId &&
-  !['admin', 'manager'].includes(req.user.role)
+  !staffRoles.includes(req.user.role)
 ) {
   return res.status(403).json({
     success: false,
@@ -451,7 +561,7 @@ if (
 
   res.json({
     success: true,
-    order
+    order: normalizeOrderResponse(order)
   });
 }));
 
@@ -460,6 +570,8 @@ if (
 // @access  Private (Admin/Manager only)
 router.patch('/:id/status', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('status').isIn(['pending', 'confirmed', 'preparing', 'pickup', 'ready', 'shop', 'driverpickup', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
@@ -476,7 +588,7 @@ router.patch('/:id/status', [
 
   const { status, message } = req.body;
 
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({
@@ -507,7 +619,7 @@ router.patch('/:id/status', [
   await order.save();
 
   // Single populate query — no redundant lean check
-  const orderDoc = await Order.findById(req.params.id)
+  const orderDoc = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate([
       { path: 'userId', select: 'firstName lastName email phone' },
       { path: 'items.foodItem', select: 'name imageUrl price description' },
@@ -541,6 +653,8 @@ router.patch('/:id/status', [
 
 router.patch('/:id/cancel', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('reason').trim().notEmpty().withMessage('Cancellation reason is required')
 ], asyncHandler(async (req, res) => {
@@ -550,7 +664,7 @@ router.patch('/:id/cancel', [
   }
 
   const { reason } = req.body;
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({ success: false, message: 'Order not found' });
@@ -559,7 +673,7 @@ router.patch('/:id/cancel', [
   // Authorization
   const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
   const isOwner = order.userId.toString() === currentUserId;
-  const isAdmin = ['admin', 'manager', 'superadmin'].includes(req.user.role);
+  const isAdmin = ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'].includes(req.user.role);
   if (!isOwner && !isAdmin) {
     return res.status(403).json({ success: false, message: 'Not authorized' });
   }
@@ -575,7 +689,7 @@ router.patch('/:id/cancel', [
 
   // Restore stock
   for (const item of order.items) {
-    const foodItem = await FoodItem.findById(item.foodItem);
+    const foodItem = await FoodItem.findOne({ _id: item.foodItem, branchId: req.branchId });
     if (foodItem) {
       await foodItem.updateStock(item.quantity, 'add');
     }
@@ -612,6 +726,8 @@ router.patch('/:id/cancel', [
 // @access  Private
 router.post('/:id/rating', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid order ID'),
   body('food').optional().isInt({ min: 1, max: 5 }).withMessage('Food rating must be between 1 and 5'),
   body('delivery').optional().isInt({ min: 1, max: 5 }).withMessage('Delivery rating must be between 1 and 5'),
@@ -627,7 +743,7 @@ router.post('/:id/rating', [
     });
   }
 
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
     return res.status(404).json({

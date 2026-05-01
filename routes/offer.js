@@ -5,6 +5,7 @@ const { FoodItem } = require('../models/Category');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const mongoose = require('mongoose');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
 const router = express.Router();
 
@@ -12,6 +13,8 @@ const router = express.Router();
 // @route   GET /api/v1/offers
 // @access  Public
 router.get('/', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
   query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
@@ -40,6 +43,7 @@ router.get('/', [
   const skip = (page - 1) * limit;
 
   let query = {
+    branchId: req.branchId,
     isActive: true,
     startDate: { $lte: new Date() },
     endDate: { $gte: new Date() }
@@ -134,6 +138,8 @@ router.get('/', [
 // @route   GET /api/v1/offers/:id/can-claim
 // @access  Public
 router.get('/:id/can-claim', [
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid offer ID'),
   query('deviceId').notEmpty().withMessage('Device ID is required')
 ], asyncHandler(async (req, res) => {
@@ -147,7 +153,7 @@ router.get('/:id/can-claim', [
   }
 
   const { deviceId } = req.query;
-  const offer = await Offer.findById(req.params.id);
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!offer) {
     return res.status(404).json({
@@ -179,6 +185,8 @@ router.get('/:id/can-claim', [
 // @access  Private
 router.post('/:id/claim', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('deviceId').notEmpty().withMessage('Device ID is required')
 ], asyncHandler(async (req, res) => {
@@ -192,7 +200,7 @@ router.post('/:id/claim', [
   }
 
   const { deviceId } = req.body;
-  const offer = await Offer.findById(req.params.id);
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!offer) {
     return res.status(404).json({
@@ -240,6 +248,8 @@ router.post('/:id/claim', [
 // @route   GET /api/v1/offers/items-with-offers
 // @access  Public
 router.get('/items-with-offers', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('platform').optional().isIn(['mobile', 'web', 'all']).withMessage('Platform must be mobile, web, or all'),
   query('deviceId').optional().isString().withMessage('Device ID must be a string'),
   query('includeUnavailable').optional().isBoolean().withMessage('Include unavailable must be boolean')
@@ -248,6 +258,7 @@ router.get('/items-with-offers', [
   const now = new Date();
 
   let offerQuery = {
+    branchId: req.branchId,
     isActive: true,
     startDate: { $lte: now },
     endDate: { $gte: now },
@@ -280,6 +291,7 @@ router.get('/items-with-offers', [
   });
 
   let itemQuery = {
+    branchId: req.branchId,
     _id: { $in: Array.from(itemIds) }
   };
   
@@ -383,6 +395,8 @@ function calculateItemDiscount(originalPrice, offer) {
   return Math.round(discountedPrice * 100) / 100;
 }
 router.get('/device-claims', [
+  attachBranchToRequest,
+  resolveBranchContext,
   query('deviceId').notEmpty().withMessage('Device ID is required')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -399,6 +413,7 @@ router.get('/device-claims', [
   try {
     // Find all offers where this device has claimed
     const offers = await Offer.find({
+      branchId: req.branchId,
       'claimedDevices.deviceId': deviceId
     }).select('_id title type claimedDevices');
 
@@ -438,6 +453,8 @@ router.get('/device-claims', [
 // @access  Private
 router.post('/:id/claim-with-order', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('deviceId').notEmpty().withMessage('Device ID is required'),
   body('orderId').isMongoId().withMessage('Invalid order ID')
@@ -452,7 +469,7 @@ router.post('/:id/claim-with-order', [
   }
 
   const { deviceId, orderId } = req.body;
-  const offer = await Offer.findById(req.params.id);
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!offer) {
     return res.status(404).json({
@@ -515,6 +532,8 @@ router.post('/:id/claim-with-order', [
 // @access  Private (Admin only)
 router.post('/', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
@@ -547,6 +566,7 @@ router.post('/', [
   if (req.body.appliedToItems && req.body.appliedToItems.length > 0) {
     const items = await FoodItem.find({
       _id: { $in: req.body.appliedToItems },
+      branchId: req.branchId,
       isActive: true
     });
 
@@ -558,7 +578,7 @@ router.post('/', [
     }
   }
 
-  const offer = await Offer.create(req.body);
+  const offer = await Offer.create({ ...req.body, branchId: req.branchId });
   
   await offer.populate({
     path: 'appliedToItems',
@@ -578,6 +598,8 @@ router.post('/', [
 // @access  Private (Admin only)
 router.put('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('isOneTimePerDevice').optional().isBoolean().withMessage('isOneTimePerDevice must be boolean')
@@ -591,7 +613,7 @@ router.put('/:id', [
     });
   }
 
-  const offer = await Offer.findById(req.params.id);
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId });
   if (!offer) {
     return res.status(404).json({
       success: false,
@@ -603,6 +625,7 @@ router.put('/:id', [
   if (req.body.appliedToItems && req.body.appliedToItems.length > 0) {
     const items = await FoodItem.find({
       _id: { $in: req.body.appliedToItems },
+      branchId: req.branchId,
       isActive: true
     });
 
@@ -643,6 +666,8 @@ router.put('/:id', [
 // @route   GET /api/v1/offers/:id
 // @access  Public
 router.get('/:id', [
+  attachBranchToRequest,
+  resolveBranchContext,
   param('id').isMongoId().withMessage('Invalid offer ID'),
   query('deviceId').optional().isString().withMessage('Device ID must be a string')
 ], asyncHandler(async (req, res) => {
@@ -657,7 +682,7 @@ router.get('/:id', [
 
   const { deviceId } = req.query;
 
-  const offer = await Offer.findById(req.params.id)
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId })
     .populate({
       path: 'appliedToItems',
       select: 'name imageUrl price originalPrice category isActive',
@@ -698,6 +723,8 @@ router.get('/:id', [
 // @access  Private (Admin only)
 router.delete('/:id', [
   auth,
+  attachBranchToRequest,
+  resolveBranchContext,
   authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID')
 ], asyncHandler(async (req, res) => {
@@ -710,7 +737,7 @@ router.delete('/:id', [
     });
   }
 
-  const offer = await Offer.findById(req.params.id);
+  const offer = await Offer.findOne({ _id: req.params.id, branchId: req.branchId });
   if (!offer) {
     return res.status(404).json({
       success: false,

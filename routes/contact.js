@@ -2,33 +2,69 @@ const express = require('express');
 const router = express.Router();
 const contactController = require('../controllers/contactcontroller');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
+const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 
-// ✅ Public route — Submit contact form
-router.post('/', contactController.submitContactForm);
+// Public — Submit contact form
+router.post(
+  '/',
+  attachBranchToRequest,
+  optionalAuth,
+  resolveBranchContext,
+  contactController.submitContactForm
+);
 
+router.get(
+  '/',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.getAllContacts
+);
 
-// Get all contact messages (with pagination, search, and filters)
-router.get('/',auth,
-  authorize('admin', 'manager'), contactController.getAllContacts);
+router.get(
+  '/stats',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.getContactStats
+);
 
-// Get contact stats
-router.get('/stats',auth,
-  authorize('admin', 'manager'), contactController.getContactStats);
+router.get(
+  '/:id',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.getContactById
+);
 
-// Get a single contact by ID
-router.get('/:id',auth,
-  authorize('admin', 'manager'), contactController.getContactById);
+router.put(
+  '/:id/status',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.updateContactStatus
+);
 
-// Update contact status
-router.put('/:id/status',auth,
-  authorize('admin', 'manager'), contactController.updateContactStatus);
+router.post(
+  '/:id/reply',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.replyToContact
+);
 
-// Reply to a contact message
-router.post('/:id/reply',auth,
-  authorize('admin', 'manager'), contactController.replyToContact);
-
-// Delete a contact
-router.delete('/:id',auth,
-  authorize('admin', 'manager'), contactController.deleteContact);
+router.delete(
+  '/:id',
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  contactController.deleteContact
+);
 
 module.exports = router;
