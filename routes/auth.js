@@ -418,8 +418,8 @@ router.post('/google-signin', [
           lastName: user.lastName,
           email: user.email,
           phone: user.phone,
-          role: user.role,
-          avatar: user.avatar,
+             avatar: user.avatar,
+          googleId: user.googleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
           lastLogin: user.lastLogin
@@ -477,6 +477,7 @@ router.post('/google-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
+          googleId: user.googleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
           lastLogin: user.lastLogin
@@ -486,26 +487,10 @@ router.post('/google-signin', [
   } catch (error) {
     console.error('❌ Google Sign-In error:', error);
     
-    // More specific error messages
-    if (error.message && error.message.includes('Token')) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid Google token'
-      });
-    }
-    
-    if (error.message && error.message.includes('audience')) {
-      console.error('⚠️  Audience mismatch - check your Google Client IDs');
-      console.error('   Expected audience:', process.env.GOOGLE_WEB_CLIENT_ID);
-      return res.status(400).json({
-        success: false,
-        message: 'Google token audience mismatch. Please check configuration.'
-      });
-    }
-
-    return res.status(500).json({
+    return res.status(error.message && error.message.includes('Token') ? 400 : 500).json({
       success: false,
-      message: 'Google sign-in failed. Please try again.'
+      message: 'Google sign-in failed',
+      error: error.message
     });
   }
 }));
@@ -622,6 +607,7 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
+          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
           lastLogin: user.lastLogin
@@ -680,6 +666,7 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar || null,
+          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
           lastLogin: user.lastLogin
@@ -690,20 +677,10 @@ router.post('/apple-signin', [
   } catch (error) {
     console.error('❌ Apple Sign-In error:', error);
 
-    if (error.message && (
-      error.message.includes('expired') ||
-      error.message.includes('invalid') ||
-      error.message.includes('JsonWebToken')
-    )) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired Apple identity token'
-      });
-    }
-
-    return res.status(500).json({
+    return res.status(400).json({
       success: false,
-      message: 'Apple sign-in failed. Please try again.'
+      message: 'Apple sign-in failed',
+      error: error.message
     });
   }
 }));
