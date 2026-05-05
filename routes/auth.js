@@ -14,10 +14,50 @@ const { attachBranchToRequest, resolveBranchContext } = require('../middleware/b
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
 const { OAuth2Client } = require('google-auth-library');
 const appleSignin = require('apple-signin-auth');
+const jwksClient = require('jwks-rsa');
 
 // ✅ CRITICAL FIX: Use the WEB CLIENT ID for token verification
 // This is the serverClientId used in your Flutter app
 const client = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID || process.env.GOOGLE_CLIENT_ID);
+
+// Apple JWKS client
+const appleJwksClient = jwksClient({
+  jwksUri: 'https://appleid.apple.com/auth/keys',
+  cache: true,
+  rateLimit: true,
+  jwksRequestsPerMinute: 5
+});
+
+function getAppleSigningKey(header, callback) {
+  appleJwksClient.getSigningKey(header.kid, function(err, key) {
+    if (err) {
+      return callback(err);
+    }
+    const signingKey = key.getPublicKey();
+    callback(null, signingKey);
+  });
+}
+
+/**
+ * Manual Apple Token Verification
+ */
+const verifyAppleTokenManual = (token) => {
+  return new Promise((resolve, reject) => {
+    jwt.verify(
+      token,
+      getAppleSigningKey,
+      {
+        audience: process.env.APPLE_CLIENT_ID, // com.saborley.app
+        issuer: 'https://appleid.apple.com',
+        algorithms: ['RS256']
+      },
+      (err, decoded) => {
+        if (err) return reject(err);
+        resolve(decoded);
+      }
+    );
+  });
+};
 
 const router = express.Router();
 
@@ -517,6 +557,8 @@ router.post('/google-signin', [
 // @route   POST /api/v1/auth/apple-signin
 // @access  Public
 router.post('/apple-signin', [
+  attachBranchToRequest,
+  resolveBranchContext,
   body('identityToken')
     .notEmpty()
     .withMessage('Apple identity token is required'),
@@ -548,13 +590,22 @@ router.post('/apple-signin', [
   const { identityToken, firstName, lastName, fcmToken, deviceId, platform } = req.body;
 
   try {
-    console.log('🍎 Verifying Apple identity token...');
+    console.log('🍎 Verifying Apple identity token with audience:', process.env.APPLE_CLIENT_ID);
 
-    // Verify the Apple identity token
-    const applePayload = await appleSignin.verifyIdToken(identityToken, {
-      audience: process.env.APPLE_CLIENT_ID, // Your app's Bundle ID e.g. com.yourcompany.app
-      ignoreExpiration: false,
-    });
+    // Verify the Apple identity token manually for better debugging/reliability
+    let applePayload;
+    try {
+      applePayload = await verifyAppleTokenManual(identityToken);
+      console.log('✅ Apple manual verification successful');
+    } catch (manualError) {
+      console.warn('⚠️ Manual verification failed, trying apple-signin-auth fallback:', manualError.message);
+      // Fallback to library if manual fails (though manual is usually better)
+      applePayload = await appleSignin.verifyIdToken(identityToken, {
+        audience: process.env.APPLE_CLIENT_ID,
+        ignoreExpiration: false,
+      });
+      console.log('✅ Apple library fallback verification successful');
+    }
 
     const {
       sub: appleId,       // Apple's unique user identifier
@@ -572,10 +623,10 @@ router.post('/apple-signin', [
     console.log('✅ Apple token verified. appleId:', appleId);
 
     // Try finding user by appleId first (most reliable), then by email
-    let user = await User.findOne({ appleId });
+    let user = await User.findOne({ appleId, branchId: req.branchId });
 
     if (!user && email) {
-      user = await User.findOne({ email });
+      user = await User.findOne({ email, branchId: req.branchId });
     }
 
     if (user) {
@@ -652,6 +703,7 @@ router.post('/apple-signin', [
         emailVerified: emailVerified === true || emailVerified === 'true',
         authProvider: 'apple',
         appleId,
+        branchId: req.branchId,
       });
 
       // Update FCM token if provided

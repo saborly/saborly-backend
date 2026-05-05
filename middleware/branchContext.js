@@ -102,8 +102,8 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
     return res.status(400).json({ success: false, message: 'Invalid branchId' });
   }
 
-  const branch = await Branch.findById(branchIdStr).lean();
-  if (!branch || branch.isActive === false) {
+  const branchDoc = await Branch.findById(branchIdStr).lean();
+  if (!branchDoc || branchDoc.isActive === false) {
     return res.status(404).json({
       success: false,
       message: 'Branch not found or inactive',
@@ -111,7 +111,7 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
   }
 
   req.branchId = new mongoose.Types.ObjectId(branchIdStr);
-  req.branchDoc = branch;
+  req.branchDoc = branchDoc;
   next();
 });
 
