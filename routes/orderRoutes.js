@@ -278,13 +278,22 @@ const {
     }
 
     // 2. Send notification to ALL admins and managers
+    const targetBranchId = order.branchId?._id || order.branchId;
     const adminUsers = await User.find({
       role: { $in: ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'] },
       isActive: true,
-      fcmToken: { $exists: true, $ne: null },
       $or: [
-        { branchId: order.branchId },
+        { branchId: targetBranchId },
         { role: { $in: ['superadmin', 'super_admin'] } },
+      ],
+      // Include users that have either legacy single token or new multi-device tokens
+      $and: [
+        {
+          $or: [
+            { fcmToken: { $exists: true, $ne: null } },
+            { 'fcmTokens.0': { $exists: true } },
+          ],
+        },
       ],
     }).select('firstName lastName email fcmToken fcmTokens');
 
