@@ -298,6 +298,29 @@ const {
       ],
     }).select('firstName lastName email fcmToken fcmTokens');
 
+    const branchIdForTopic = targetBranchId?.toString?.() || '';
+    const sendBranchTopicFallback = async () => {
+      if (!branchIdForTopic) return;
+      const topicResult = await sendNotificationToTopic(
+        `branch-${branchIdForTopic}`,
+        '🔔 New Order Received',
+        `Order #${order.orderNumber} - €${order.total.toFixed(2)}`,
+        {
+          type: 'new_order',
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          total: order.total.toString(),
+          branchId: branchIdForTopic,
+          timestamp: new Date().toISOString()
+        }
+      );
+      if (topicResult.success) {
+        console.log(`✅ Topic notification sent: branch-${branchIdForTopic}`);
+      } else {
+        console.error('❌ Topic notification failed:', topicResult.error);
+      }
+    };
+
     if (adminUsers.length > 0) {
       const adminTokens = [];
       adminUsers.forEach(admin => {
@@ -329,31 +352,13 @@ const {
 
         // Fallback: if token-based delivery failed for all recipients, send to branch topic.
         if ((notificationResult.successCount || 0) === 0) {
-          const branchIdForTopic = targetBranchId?.toString?.() || '';
-          if (branchIdForTopic) {
-            const topicResult = await sendNotificationToTopic(
-              `branch-${branchIdForTopic}`,
-              '🔔 New Order Received',
-              `Order #${order.orderNumber} - €${order.total.toFixed(2)}`,
-              {
-                type: 'new_order',
-                orderId: order._id.toString(),
-                orderNumber: order.orderNumber,
-                total: order.total.toString(),
-                branchId: branchIdForTopic,
-                timestamp: new Date().toISOString()
-              }
-            );
-            if (topicResult.success) {
-              console.log(`✅ Fallback topic notification sent: branch-${branchIdForTopic}`);
-            } else {
-              console.error('❌ Fallback topic notification failed:', topicResult.error);
-            }
-          }
+          await sendBranchTopicFallback();
         }
       }
     } else {
       console.warn(`⚠️ No admin users matched for branch ${targetBranchId?.toString?.() || 'unknown'}`);
+      // No token recipients for this branch; deliver through branch topic subscriptions.
+      await sendBranchTopicFallback();
     }
   } catch (notificationError) {
     console.error('❌ Error sending notifications:', notificationError);
