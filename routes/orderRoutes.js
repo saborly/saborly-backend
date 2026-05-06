@@ -14,6 +14,7 @@ const { sendOrderStatusNotification, sendNewOrderNotification } = require('../ut
 const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
+const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
 
 const normalizeStringValue = (value) => {
   if (value === null || value === undefined) return value;
@@ -325,7 +326,34 @@ const {
         } else {
           console.error('❌ Failed to send admin notifications:', notificationResult.error);
         }
+
+        // Fallback: if token-based delivery failed for all recipients, send to branch topic.
+        if ((notificationResult.successCount || 0) === 0) {
+          const branchIdForTopic = targetBranchId?.toString?.() || '';
+          if (branchIdForTopic) {
+            const topicResult = await sendNotificationToTopic(
+              `branch-${branchIdForTopic}`,
+              '🔔 New Order Received',
+              `Order #${order.orderNumber} - €${order.total.toFixed(2)}`,
+              {
+                type: 'new_order',
+                orderId: order._id.toString(),
+                orderNumber: order.orderNumber,
+                total: order.total.toString(),
+                branchId: branchIdForTopic,
+                timestamp: new Date().toISOString()
+              }
+            );
+            if (topicResult.success) {
+              console.log(`✅ Fallback topic notification sent: branch-${branchIdForTopic}`);
+            } else {
+              console.error('❌ Fallback topic notification failed:', topicResult.error);
+            }
+          }
+        }
       }
+    } else {
+      console.warn(`⚠️ No admin users matched for branch ${targetBranchId?.toString?.() || 'unknown'}`);
     }
   } catch (notificationError) {
     console.error('❌ Error sending notifications:', notificationError);
