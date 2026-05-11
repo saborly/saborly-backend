@@ -474,12 +474,13 @@ router.post('/google-signin', [
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
-          phone: user.phone,
-             avatar: user.avatar,
-          googleId: user.googleId, // Added for testing
+          phone: user.phone || '',
+          role: user.role,
+          avatar: user.avatar,
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: user.authProvider || 'google'
         }
       });
     } else {
@@ -535,10 +536,10 @@ router.post('/google-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
-          googleId: user.googleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: 'google'
         }
       });
     }
@@ -676,10 +677,10 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
-          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: user.authProvider || 'apple'
         }
       });
 
@@ -736,10 +737,10 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar || null,
-          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: 'apple'
         }
       });
     }
