@@ -14,6 +14,7 @@ const { sendOrderStatusNotification, sendNewOrderNotification } = require('../ut
 const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
+const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
 
 const normalizeStringValue = (value) => {
   if (value === null || value === undefined) return value;
@@ -278,15 +279,47 @@ const {
     }
 
     // 2. Send notification to ALL admins and managers
+    const targetBranchId = order.branchId?._id || order.branchId;
     const adminUsers = await User.find({
       role: { $in: ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'] },
       isActive: true,
-      fcmToken: { $exists: true, $ne: null },
       $or: [
-        { branchId: order.branchId },
+        { branchId: targetBranchId },
         { role: { $in: ['superadmin', 'super_admin'] } },
       ],
+      // Include users that have either legacy single token or new multi-device tokens
+      $and: [
+        {
+          $or: [
+            { fcmToken: { $exists: true, $ne: null } },
+            { 'fcmTokens.0': { $exists: true } },
+          ],
+        },
+      ],
     }).select('firstName lastName email fcmToken fcmTokens');
+
+    const branchIdForTopic = targetBranchId?.toString?.() || '';
+    const sendBranchTopicFallback = async () => {
+      if (!branchIdForTopic) return;
+      const topicResult = await sendNotificationToTopic(
+        `branch-${branchIdForTopic}`,
+        '🔔 New Order Received',
+        `Order #${order.orderNumber} - €${order.total.toFixed(2)}`,
+        {
+          type: 'new_order',
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          total: order.total.toString(),
+          branchId: branchIdForTopic,
+          timestamp: new Date().toISOString()
+        }
+      );
+      if (topicResult.success) {
+        console.log(`✅ Topic notification sent: branch-${branchIdForTopic}`);
+      } else {
+        console.error('❌ Topic notification failed:', topicResult.error);
+      }
+    };
 
     if (adminUsers.length > 0) {
       const adminTokens = [];
@@ -316,7 +349,16 @@ const {
         } else {
           console.error('❌ Failed to send admin notifications:', notificationResult.error);
         }
+
+        // Fallback: if token-based delivery failed for all recipients, send to branch topic.
+        if ((notificationResult.successCount || 0) === 0) {
+          await sendBranchTopicFallback();
+        }
       }
+    } else {
+      console.warn(`⚠️ No admin users matched for branch ${targetBranchId?.toString?.() || 'unknown'}`);
+      // No token recipients for this branch; deliver through branch topic subscriptions.
+      await sendBranchTopicFallback();
     }
   } catch (notificationError) {
     console.error('❌ Error sending notifications:', notificationError);
