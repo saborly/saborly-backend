@@ -8,12 +8,13 @@ const auth = asyncHandler(async (req, res, next) => {
   let token;
 
   // Check for token in headers
-  if (req.headers.authorization && req.headers.authorization.toLowerCase().startsWith('bearer')) {
+  if (req.headers.authorization && req.headers.authorization.toLowerCase().startsWith('bearer ')) {
     token = req.headers.authorization.split(' ')[1];
   }
 
   // Make sure token exists
   if (!token) {
+    console.log('Auth Middleware: No token provided in headers:', Object.keys(req.headers));
     return res.status(401).json({
       success: false,
       message: 'Not authorized to access this route'
@@ -92,6 +93,10 @@ const auth = asyncHandler(async (req, res, next) => {
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({ success: false, message: 'Token expired' });
     }
+    if (error.name === 'JsonWebTokenError') {
+      console.log('Auth Middleware: Invalid Token:', token?.substring(0, 10) + '...');
+      return res.status(401).json({ success: false, message: 'Invalid token' });
+    }
     return res.status(401).json({
       success: false,
       message: 'Not authorized to access this route'
@@ -142,7 +147,7 @@ const authorize = (...roles) => {
 const optionalAuth = asyncHandler(async (req, res, next) => {
   let token;
 
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+  if (req.headers.authorization && req.headers.authorization.toLowerCase().startsWith('bearer ')) {
     token = req.headers.authorization.split(' ')[1];
   }
 
