@@ -144,6 +144,12 @@ phone: {
   emailOTPExpire: Date,
   resetPasswordOTP: String,
   resetPasswordOTPExpire: Date,
+  // Tracks whether this account has already received the first-order mobile discount
+  firstOrderDiscount: {
+    used: { type: Boolean, default: false },
+    usedAt: Date,
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' }
+  }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

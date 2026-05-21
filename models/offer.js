@@ -449,7 +449,7 @@ offerSchema.statics.findByCouponCode = function(branchId, code, platform, device
   });
 };
 
-offerSchema.index({ branchId: 1, couponCode: 1 }, { unique: true, sparse: true });
+offerSchema.index({ branchId: 1, couponCode: 1 }, { sparse: true });
 offerSchema.index({ branchId: 1, isActive: 1, startDate: 1, endDate: 1 });
 
 module.exports = mongoose.model('Offer', offerSchema);

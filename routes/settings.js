@@ -72,7 +72,8 @@ router.get('/public', attachBranchToRequest, resolveBranchContext, asyncHandler(
     socialMedia: settings.socialMedia,
     theme: settings.theme,
     maintenanceMode: settings.maintenanceMode,
-    isCurrentlyOpen: settings.isCurrentlyOpen
+    isCurrentlyOpen: settings.isCurrentlyOpen,
+    firstOrderDiscountSettings: settings.firstOrderDiscountSettings
   };
   
   res.json({
@@ -318,4 +319,44 @@ router.patch('/delivery', [
     deliverySettings: settings.deliverySettings
   });
 }));
+// @desc    Toggle first-order mobile discount on/off
+// @route   PATCH /api/v1/settings/first-order-discount/toggle
+// @access  Private (Admin/Manager only)
+router.patch('/first-order-discount/toggle', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  body('isEnabled').isBoolean().withMessage('isEnabled must be a boolean'),
+  body('discountPercentage').optional().isFloat({ min: 1, max: 100 }).withMessage('discountPercentage must be between 1 and 100')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+
+  let settings = await Setting.findOne({ branchId: req.branchId });
+  if (!settings) {
+    return res.status(404).json({ success: false, message: 'Settings not found' });
+  }
+
+  if (!settings.firstOrderDiscountSettings) {
+    settings.firstOrderDiscountSettings = {};
+  }
+
+  settings.firstOrderDiscountSettings.isEnabled = req.body.isEnabled;
+  if (req.body.discountPercentage !== undefined) {
+    settings.firstOrderDiscountSettings.discountPercentage = req.body.discountPercentage;
+  }
+  settings.firstOrderDiscountSettings.updatedAt = new Date();
+
+  await settings.save();
+
+  res.json({
+    success: true,
+    message: `First-order discount ${req.body.isEnabled ? 'enabled' : 'disabled'}`,
+    firstOrderDiscountSettings: settings.firstOrderDiscountSettings
+  });
+}));
+
 module.exports = router;

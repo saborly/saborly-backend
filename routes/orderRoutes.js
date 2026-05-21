@@ -1,6 +1,7 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const Order = require('../models/Order');
+const FirstOrderDevice = require('../models/FirstOrderDevice');
 
 const { FoodItem } = require('../models/Category');
 const User = require('../models/User');
@@ -158,7 +159,10 @@ const {
     deliveryFee: clientDeliveryFee,
     subtotal: clientSubtotal,
     tax: clientTax,
-    total: clientTotal
+    total: clientTotal,
+    platform,
+    deviceId,
+    applyFirstOrderDiscount
   } = req.body;
 
   // Validate COD payment type for cash-on-delivery orders
@@ -229,16 +233,52 @@ const {
 
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   const tax = clientTax !== undefined ? clientTax : 0.0;
-  const discount = clientTax !== undefined ? clientTax : 0.0; // Changed from clientTax to correct variable if needed
-  
-  // Use frontend's total since all calculations are done there
-  const total = clientTotal !== undefined ? clientTotal : (calculatedSubtotal + deliveryFee + tax - discount);
+  const subtotal = clientSubtotal || calculatedSubtotal;
+
+  // First-order mobile discount — always validated server-side, never trusted from client
+  let discount = 0.0;
+  let firstOrderDiscountApplied = false;
+
+  if (applyFirstOrderDiscount === true && platform === 'mobile' && deviceId) {
+    const userId = req.user._id || req.user.id;
+
+    // Global setting check
+    const Setting = require('../models/Setting');
+    const settings = await Setting.findOne({ branchId: effectiveBranchId }).select('firstOrderDiscountSettings');
+    const discountEnabled = settings?.firstOrderDiscountSettings?.isEnabled !== false;
+
+    // Account check: user hasn't already used this discount
+    const User = require('../models/User');
+    const userDoc = await User.findById(userId).select('firstOrderDiscount');
+    const accountUnused = !userDoc?.firstOrderDiscount?.used;
+
+    // Account check: user has no previous non-cancelled orders
+    const priorOrderCount = await Order.countDocuments({
+      userId,
+      branchId: effectiveBranchId,
+      status: { $nin: ['cancelled'] }
+    });
+
+    // Device check: this device hasn't used the discount before
+    const deviceUsed = await FirstOrderDevice.findOne({ deviceId, branchId: effectiveBranchId });
+
+    if (discountEnabled && accountUnused && priorOrderCount === 0 && !deviceUsed) {
+      const pct = (settings?.firstOrderDiscountSettings?.discountPercentage ?? 20) / 100;
+      discount = Math.round(subtotal * pct * 100) / 100;
+      firstOrderDiscountApplied = true;
+    }
+  }
+
+  // Use frontend's total but recalculate when first-order discount applies server-side
+  const total = firstOrderDiscountApplied
+    ? Math.round((subtotal + deliveryFee + tax - discount) * 100) / 100
+    : (clientTotal !== undefined ? clientTotal : (subtotal + deliveryFee + tax - discount));
 
   // orderNumber is generated in the Order pre-save hook (timestamp + random suffix)
   const orderData = {
     userId: req.user._id || req.user.id,
     items: processedItems,
-    subtotal: clientSubtotal || calculatedSubtotal,
+    subtotal,
     deliveryFee,
     tax,
     discount,
@@ -257,6 +297,28 @@ const {
   }
 
   const order = await Order.create(orderData);
+
+  // Persist first-order discount usage so it cannot be reused
+  if (firstOrderDiscountApplied) {
+    const userId = req.user._id || req.user.id;
+    const User = require('../models/User');
+    await Promise.all([
+      // Mark on user account
+      User.findByIdAndUpdate(userId, {
+        'firstOrderDiscount.used': true,
+        'firstOrderDiscount.usedAt': new Date(),
+        'firstOrderDiscount.orderId': order._id
+      }),
+      // Mark device (upsert in case of race condition)
+      FirstOrderDevice.create({
+        deviceId,
+        branchId: effectiveBranchId,
+        userId,
+        orderId: order._id,
+        discountAmount: discount
+      }).catch(() => {})  // ignore duplicate key on race
+    ]);
+  }
 
   // Populate order details
   await order.populate([
@@ -369,7 +431,9 @@ const {
   res.status(201).json({
     success: true,
     message: 'Order created successfully',
-    order: responseOrder
+    order: responseOrder,
+    firstOrderDiscountApplied,
+    discountAmount: firstOrderDiscountApplied ? discount : undefined
   });
 }));
 
@@ -549,6 +613,61 @@ router.get('/', [
     totalPages,
     currentPage: parseInt(page),
     orders: orders.map(normalizeOrderResponse)
+  });
+}));
+
+// @desc    Check first-order mobile discount eligibility
+// @route   GET /api/v1/orders/first-order-discount/check
+// @access  Private
+router.get('/first-order-discount/check', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  query('deviceId').notEmpty().withMessage('deviceId is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+
+  const { deviceId } = req.query;
+  const userId = req.user._id || req.user.id;
+
+  // Global setting check: is the first-order discount enabled by admin?
+  const Setting = require('../models/Setting');
+  const settings = await Setting.findOne({ branchId: req.branchId }).select('firstOrderDiscountSettings');
+  const discountEnabled = settings?.firstOrderDiscountSettings?.isEnabled !== false; // default true
+  if (!discountEnabled) {
+    return res.json({ success: true, eligible: false, reason: 'disabled_by_admin' });
+  }
+
+  // Account check: has this user already used the first-order discount?
+  const user = await require('../models/User').findById(userId).select('firstOrderDiscount');
+  if (user?.firstOrderDiscount?.used) {
+    return res.json({ success: true, eligible: false, reason: 'account_used' });
+  }
+
+  // Account check: does this user already have a non-cancelled order?
+  const existingOrderCount = await Order.countDocuments({
+    userId,
+    branchId: req.branchId,
+    status: { $nin: ['cancelled'] }
+  });
+  if (existingOrderCount > 0) {
+    return res.json({ success: true, eligible: false, reason: 'has_orders' });
+  }
+
+  // Device check: has this device already used the first-order discount on any account?
+  const deviceRecord = await FirstOrderDevice.findOne({ deviceId, branchId: req.branchId });
+  if (deviceRecord) {
+    return res.json({ success: true, eligible: false, reason: 'device_used' });
+  }
+
+  return res.json({
+    success: true,
+    eligible: true,
+    discountPercentage: 20,
+    message: '20% off your first order!'
   });
 }));
 

@@ -264,6 +264,24 @@ const settingSchema = new mongoose.Schema({
     }
   },
   
+  // First-Order Mobile Discount Settings
+  firstOrderDiscountSettings: {
+    isEnabled: {
+      type: Boolean,
+      default: true
+    },
+    discountPercentage: {
+      type: Number,
+      default: 20,
+      min: [1, 'Discount must be at least 1%'],
+      max: [100, 'Discount cannot exceed 100%']
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now
+    }
+  },
+
   // Delivery Settings
   deliverySettings: {
     isDeliveryEnabled: {
