@@ -26,24 +26,32 @@ async function resolveDefaultBranchId() {
     return defaultBranchIdCache;
   }
 
-  const defaultBranch = await Branch.findOne({
-    isActive: true,
-    $or: [
-      { name: /barcelona/i },
-      { name: /saborly_main/i },
-      { phone: '+34932112072' },
-      { location: /barcelona/i },
-    ],
-  })
-    .select('_id')
-    .lean();
+  try {
+    const defaultBranch = await Branch.findOne({
+      isActive: true,
+      $or: [
+        { name: /barcelona/i },
+        { name: /saborly_main/i },
+        { phone: '+34932112072' },
+        { location: /barcelona/i },
+      ],
+    })
+      .select('_id')
+      .lean();
 
-  if (defaultBranch?._id) {
-    defaultBranchIdCache = defaultBranch._id.toString();
-    return defaultBranchIdCache;
+    if (defaultBranch?._id) {
+      defaultBranchIdCache = defaultBranch._id.toString();
+      return defaultBranchIdCache;
+    }
+  } catch (error) {
+    console.error('Error finding default branch:', error.message);
   }
 
-  return null;
+  // Hardcoded fallback for Saborly Main (Barcelona) if DB lookup fails or branch not found
+  // This ensures branchId is never null/undefined for critical flows like Apple Sign-In
+  const FALLBACK_ID = '68dbd4267fe1403440fb5d88';
+  console.log('Using hardcoded fallback branch ID:', FALLBACK_ID);
+  return FALLBACK_ID;
 }
 
 /** Attach raw client branch id (header / body / query) without validating */

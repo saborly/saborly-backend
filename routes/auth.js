@@ -431,7 +431,15 @@ router.post('/google-signin', [
       email_verified: emailVerified
     } = payload;
 
-    let user = await User.findOne({ email, branchId: req.branchId });
+    // Look for user globally (unique email index ensures only one exists)
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // If user exists in a different branch, we can either update their branch 
+      // or just allow them to login with their existing branch.
+      // For now, we allow login.
+      console.log(`✅ User found: ${email} (Branch: ${user.branchId})`);
+    }
 
     if (user) {
       // User exists - log them in
@@ -463,7 +471,8 @@ router.post('/google-signin', [
       await user.updateLastLogin();
 
       // Generate token
-      const token = user.generateAuthToken();
+      // Generate token with the CURRENT branch context from request
+      const token = user.generateAuthToken(req.branchId);
 
       return res.json({
         success: true,
@@ -474,12 +483,13 @@ router.post('/google-signin', [
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
-          phone: user.phone,
-             avatar: user.avatar,
-          googleId: user.googleId, // Added for testing
+          phone: user.phone || '',
+          role: user.role,
+          avatar: user.avatar,
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: user.authProvider || 'google'
         }
       });
     } else {
@@ -521,7 +531,8 @@ router.post('/google-signin', [
       await user.updateLastLogin();
 
       // Generate token
-      const token = user.generateAuthToken();
+      // Generate token with the branch it was created in
+      const token = user.generateAuthToken(req.branchId);
 
       return res.status(201).json({
         success: true,
@@ -535,10 +546,10 @@ router.post('/google-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
-          googleId: user.googleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: 'google'
         }
       });
     }
@@ -623,15 +634,17 @@ router.post('/apple-signin', [
     console.log('✅ Apple token verified. appleId:', appleId);
 
     // Try finding user by appleId first (most reliable), then by email
-    let user = await User.findOne({ appleId, branchId: req.branchId });
+    // Try finding user by appleId globally first (most reliable)
+    let user = await User.findOne({ appleId });
 
     if (!user && email) {
-      user = await User.findOne({ email, branchId: req.branchId });
+      // Then by email globally
+      user = await User.findOne({ email });
     }
 
     if (user) {
       // ── Existing user ────────────────────────────────────────────────
-      console.log('✅ Existing user found for Apple Sign-In:', user.email);
+      console.log(`✅ Existing Apple user found: ${user.email} (Branch: ${user.branchId})`);
 
       if (!user.isActive) {
         return res.status(401).json({
@@ -662,7 +675,7 @@ router.post('/apple-signin', [
 
       await user.updateLastLogin();
 
-      const token = user.generateAuthToken();
+      const token = user.generateAuthToken(req.branchId);
 
       return res.json({
         success: true,
@@ -676,10 +689,10 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar,
-          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: user.authProvider || 'apple'
         }
       });
 
@@ -722,7 +735,7 @@ router.post('/apple-signin', [
 
       await user.updateLastLogin();
 
-      const token = user.generateAuthToken();
+      const token = user.generateAuthToken(req.branchId);
 
       return res.status(201).json({
         success: true,
@@ -736,10 +749,10 @@ router.post('/apple-signin', [
           phone: user.phone || '',
           role: user.role,
           avatar: user.avatar || null,
-          appleId: user.appleId, // Added for testing
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          authProvider: 'apple'
         }
       });
     }
