@@ -1,11 +1,21 @@
 const Address = require('../models/Address');
+const Branch = require('../models/Branch');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
 const fetch = require('node-fetch');
 
-// Shop coordinates
-const SHOP_LAT =41.4036344;
-const SHOP_LNG = 2.1986439;
 const MAX_DELIVERY_DISTANCE = 3.5; // km
+
+// Returns { lat, lng } for the branch, falling back to the Barcelona main branch coords.
+async function getShopCoords(branchId) {
+  if (branchId) {
+    const branch = await Branch.findById(branchId).select('latitude longitude').lean();
+    if (branch && branch.latitude != null && branch.longitude != null) {
+      return { lat: branch.latitude, lng: branch.longitude };
+    }
+  }
+  // Fallback: Barcelona main branch
+  return { lat: 41.4036344, lng: 2.1986439 };
+}
 
 // Get all saved addresses for user
 exports.getSavedAddresses = async (req, res) => {
@@ -65,7 +75,8 @@ exports.saveAddress = async (req, res) => {
     }
 
     // Calculate distance from shop
-    const distance = calculateDistance(SHOP_LAT, SHOP_LNG, latitude, longitude);
+    const shop = await getShopCoords(req.branchId);
+    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
 
     if (distance > MAX_DELIVERY_DISTANCE) {
       return res.status(400).json({
@@ -206,8 +217,9 @@ exports.updateAddress = async (req, res) => {
         });
       }
 
-      const distance = calculateDistance(SHOP_LAT, SHOP_LNG, latitude, longitude);
-      
+      const shop = await getShopCoords(req.branchId);
+      const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
+
       if (distance > MAX_DELIVERY_DISTANCE) {
         return res.status(400).json({
           success: false,
@@ -350,7 +362,8 @@ exports.validateAddress = async (req, res) => {
       });
     }
 
-    const distance = calculateDistance(SHOP_LAT, SHOP_LNG, latitude, longitude);
+    const shop = await getShopCoords(req.branchId);
+    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
     const canDeliver = distance <= MAX_DELIVERY_DISTANCE;
 
     res.json({

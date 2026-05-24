@@ -20,9 +20,9 @@ const SABADELL = {
   name: 'Saborly — Sabadell',
   phone: '+34930000000',
   location: 'Sabadell, Spain',
-  address: 'Sabadell, Vallès Occidental, Spain',
-  latitude: 41.5433,
-  longitude: 2.1093,
+  address: 'Av. de Francesc Macià, 47, 08206 Sabadell, Barcelona, Spain',
+  latitude: 41.5570164,
+  longitude: 2.0969248,
 };
 
 async function findOrCreateBranch(def) {
