@@ -1,17 +1,14 @@
 const Address = require('../models/Address');
-const Branch = require('../models/Branch');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
 const fetch = require('node-fetch');
 
 const MAX_DELIVERY_DISTANCE = 3.5; // km
 
-// Returns { lat, lng } for the branch, falling back to the Barcelona main branch coords.
-async function getShopCoords(branchId) {
-  if (branchId) {
-    const branch = await Branch.findById(branchId).select('latitude longitude').lean();
-    if (branch && branch.latitude != null && branch.longitude != null) {
-      return { lat: branch.latitude, lng: branch.longitude };
-    }
+// Returns { lat, lng } for the branch using the already-resolved branchDoc on req.
+function getShopCoords(req) {
+  const doc = req.branchDoc;
+  if (doc && doc.latitude != null && doc.longitude != null) {
+    return { lat: doc.latitude, lng: doc.longitude };
   }
   // Fallback: Barcelona main branch
   return { lat: 41.4036344, lng: 2.1986439 };
@@ -75,7 +72,7 @@ exports.saveAddress = async (req, res) => {
     }
 
     // Calculate distance from shop
-    const shop = await getShopCoords(req.branchId);
+    const shop = getShopCoords(req);
     const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
 
     if (distance > MAX_DELIVERY_DISTANCE) {
@@ -217,7 +214,7 @@ exports.updateAddress = async (req, res) => {
         });
       }
 
-      const shop = await getShopCoords(req.branchId);
+      const shop = getShopCoords(req);
       const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
 
       if (distance > MAX_DELIVERY_DISTANCE) {
@@ -362,7 +359,7 @@ exports.validateAddress = async (req, res) => {
       });
     }
 
-    const shop = await getShopCoords(req.branchId);
+    const shop = getShopCoords(req);
     const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
     const canDeliver = distance <= MAX_DELIVERY_DISTANCE;
 
