@@ -84,9 +84,12 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
         if (jwtB && String(jwtB).trim()) branchIdStr = String(jwtB).trim();
       }
       if (!branchIdStr && ub) branchIdStr = ub;
+    } else if (normalizeRole(req.user.role) === 'user') {
+      // Customers may order from any branch — honour the header/body branch they selected.
+      // Fall back to their account branch only if no branch was specified.
+      if (!branchIdStr) branchIdStr = ub;
     } else {
-      // Staff / customer: always stay on their own branch.
-      // If client sends a different branchId, ignore it instead of hard-failing.
+      // Staff / branch_admin: locked to their own branch.
       if (!branchIdStr || (ub && branchIdStr !== ub)) {
         branchIdStr = ub;
       }
