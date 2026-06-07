@@ -154,7 +154,7 @@ const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
 };
 
 // Send notification to multiple devices
-const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = {}) => {
+const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = {}, options = {}) => {
   try {
     if (!Array.isArray(fcmTokens) || fcmTokens.length === 0) {
       return { success: false, message: 'No tokens provided' };
@@ -163,38 +163,66 @@ const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = 
     // ✅ FIXED: Sanitize data to ensure all values are strings
     const sanitizedData = sanitizeData({
       ...data,
+      title,
+      body,
       click_action: 'FLUTTER_NOTIFICATION_CLICK'
     });
 
-    const message = {
-      notification: {
-        title,
-        body
-      },
-      data: sanitizedData,
-      tokens: fcmTokens, // Use 'tokens' not 'token' for multiple devices
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'order_updates',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+    // dataOnly: skip the top-level `notification` payload so Android always
+    // routes the message through onMessageReceived (even when the app is in
+    // the background or killed) instead of letting the system auto-display it
+    // with a single short default chime — the app then drives its own
+    // 10-second looping ringtone for every app state.
+    const { dataOnly = false } = options;
+
+    const message = dataOnly
+      ? {
+          data: sanitizedData,
+          tokens: fcmTokens,
+          android: {
+            priority: 'high'
+          },
+          apns: {
+            headers: {
+              'apns-priority': '5',
+              'apns-push-type': 'background'
+            },
+            payload: {
+              aps: {
+                'content-available': 1
+              }
+            }
+          }
         }
-      },
-      apns: {
-        ...buildApnsConfig()
-      },
-      webpush: {
-        notification: {
-          icon: '/icon.png',
-          badge: '/badge.png',
-          requireInteraction: false
-        },
-        fcmOptions: {
-          link: '/'
-        }
-      }
-    };
+      : {
+          notification: {
+            title,
+            body
+          },
+          data: sanitizedData,
+          tokens: fcmTokens, // Use 'tokens' not 'token' for multiple devices
+          android: {
+            priority: 'high',
+            notification: {
+              sound: 'default',
+              channelId: 'order_updates',
+              clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+            }
+          },
+          apns: {
+            ...buildApnsConfig()
+          },
+          webpush: {
+            notification: {
+              icon: '/icon.png',
+              badge: '/badge.png',
+              requireInteraction: false
+            },
+            fcmOptions: {
+              link: '/'
+            }
+          }
+        };
 
     const response = await admin.messaging().sendEachForMulticast(message);
     console.log(`✅ Successfully sent ${response.successCount} notifications`);

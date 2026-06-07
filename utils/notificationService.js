@@ -111,8 +111,8 @@ const sendNewOrderNotification = async (adminTokens, order) => {
       timestamp: new Date().toISOString()
     };
 
-    const result = await sendNotificationToMultipleDevices(adminTokens, title, body, data);
-    
+    const result = await sendNotificationToMultipleDevices(adminTokens, title, body, data, { dataOnly: true });
+
     // Handle invalid tokens from batch send
     if (result.response && result.response.responses) {
       const invalidTokens = [];
