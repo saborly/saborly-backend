@@ -440,7 +440,142 @@ ${process.env.APP_NAME || 'Saborly'}
   }
 };
 
+/**
+ * Send a promotional/marketing email to a user
+ * @param {string} email - User's email address
+ * @param {string} firstName - User's first name
+ * @param {object} content
+ * @param {string} content.subject - Email subject line
+ * @param {string} [content.title] - Optional headline shown in the email body
+ * @param {string} [content.message] - Optional body text
+ * @param {string} [content.imageUrl] - Optional banner image
+ * @param {string} [content.ctaText] - Optional call-to-action button text
+ * @param {string} [content.ctaUrl] - Optional call-to-action button link
+ * @param {string} content.unsubscribeUrl - Link allowing the recipient to opt out
+ */
+const sendPromotionalEmail = async (email, firstName, content) => {
+  const transporter = createTransporter();
+  const appName = process.env.APP_NAME || 'Saborly';
+  const { subject, title, message, imageUrl, ctaText, ctaUrl, unsubscribeUrl } = content;
+
+  const mailOptions = {
+    from: `"${appName}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
+    to: email,
+    subject: subject || `News from ${appName}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${subject || appName}</title>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          }
+          .header {
+            background: #0f172a;
+            padding: 28px 30px;
+            text-align: center;
+            color: white;
+          }
+          .header h1 {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 700;
+          }
+          .banner-image {
+            width: 100%;
+            max-height: 320px;
+            object-fit: cover;
+            display: block;
+          }
+          .content {
+            padding: 32px 30px;
+          }
+          .content h2 {
+            color: #0f172a;
+            font-size: 22px;
+            margin-top: 0;
+            margin-bottom: 16px;
+          }
+          .content p {
+            margin-bottom: 16px;
+            font-size: 15px;
+            color: #475569;
+            white-space: pre-wrap;
+          }
+          .cta-button {
+            display: inline-block;
+            background: #0f172a;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            margin: 12px 0 8px;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 20px 30px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+            border-top: 1px solid #e9ecef;
+          }
+          .footer a {
+            color: #64748b;
+            text-decoration: underline;
+          }
+          .footer p {
+            margin: 5px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${appName}</h1>
+          </div>
+          ${imageUrl ? `<img class="banner-image" src="${imageUrl}" alt="${title || subject || appName}" />` : ''}
+          <div class="content">
+            ${firstName ? `<p>Hi ${firstName},</p>` : ''}
+            ${title ? `<h2>${title}</h2>` : ''}
+            ${message ? `<p>${message}</p>` : ''}
+            ${ctaText && ctaUrl ? `<a class="cta-button" href="${ctaUrl}">${ctaText}</a>` : ''}
+          </div>
+          <div class="footer">
+            <p><strong>${appName}</strong></p>
+            <p>You're receiving this because you have an account with ${appName}.</p>
+            ${unsubscribeUrl ? `<p><a href="${unsubscribeUrl}">Unsubscribe from promotional emails</a></p>` : ''}
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    text: `${firstName ? `Hi ${firstName},\n\n` : ''}${title ? `${title}\n\n` : ''}${message || ''}${ctaText && ctaUrl ? `\n\n${ctaText}: ${ctaUrl}` : ''}\n\n${appName}${unsubscribeUrl ? `\nUnsubscribe: ${unsubscribeUrl}` : ''}`,
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  return info;
+};
+
 module.exports = {
   sendOTPEmail,
-  sendPasswordResetOTPEmail
+  sendPasswordResetOTPEmail,
+  sendPromotionalEmail
 };
