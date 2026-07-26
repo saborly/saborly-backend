@@ -223,12 +223,20 @@ const {
     calculatedSubtotal += totalPrice;
   }
 
-  // Update stock for all items in parallel (avoids sequential awaits)
+  // Aggregate quantities per food item first — the same food item can appear as
+  // multiple cart lines (different meal size/addons), and calling save() twice in
+  // parallel on the same Mongoose document instance throws "Can't save() the same
+  // doc multiple times in parallel".
+  const quantityByFoodItemId = {};
+  for (const item of items) {
+    const foodItemId = (item.foodItem?.id || item.foodItem).toString();
+    quantityByFoodItemId[foodItemId] = (quantityByFoodItemId[foodItemId] || 0) + item.quantity;
+  }
+
   await Promise.all(
-    items.map(item => {
-      const foodItemId = (item.foodItem?.id || item.foodItem).toString();
-      return foodItemMap[foodItemId].updateStock(item.quantity, 'subtract');
-    })
+    Object.entries(quantityByFoodItemId).map(([foodItemId, quantity]) =>
+      foodItemMap[foodItemId].updateStock(quantity, 'subtract')
+    )
   );
 
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
