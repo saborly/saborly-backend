@@ -64,12 +64,16 @@ const sendOrderStatusNotification = async (user, order, status, customMessage = 
     };
 
     const result = await sendNotificationToDevice(fcmToken, title, body, data);
-    
-    // If there's a SenderId mismatch, remove the invalid token
-    if (!result.success && result.code === 'messaging/mismatched-credential') {
-      console.error('⚠️ Notification failed due to SenderId mismatch for user:', tuser?._id);
+
+    // Remove the token if it's invalid/unregistered/mismatched - otherwise it gets retried forever
+    const staleTokenCodes = [
+      'messaging/mismatched-credential',
+      'messaging/invalid-registration-token',
+      'messaging/registration-token-not-registered'
+    ];
+    if (!result.success && staleTokenCodes.includes(result.code)) {
+      console.error('⚠️ Notification failed with stale token for user:', tuser?._id, result.code);
       console.error('   User email:', tuser?.email);
-      console.error('   This user\'s FCM token was generated with a different Firebase project');
       console.error('   🗑️ Removing invalid FCM token from database...');
       
       try {
@@ -177,18 +181,24 @@ const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
     };
 
     const result = await sendNotificationToDevice(deliveryAgent.fcmToken, title, body, data);
-    
-    // If there's a SenderId mismatch, remove the invalid token
-    if (!result.success && result.code === 'messaging/mismatched-credential') {
-      console.error('⚠️ Delivery agent notification failed due to SenderId mismatch');
+
+    // Remove the token if it's invalid/unregistered/mismatched - otherwise it gets retried forever
+    const staleTokenCodes = [
+      'messaging/mismatched-credential',
+      'messaging/invalid-registration-token',
+      'messaging/registration-token-not-registered'
+    ];
+    if (!result.success && staleTokenCodes.includes(result.code)) {
+      console.error('⚠️ Delivery agent notification failed with stale token:', result.code);
       console.error('   🗑️ Removing invalid FCM token...');
       
       try {
         // If deliveryAgent is a User model instance, remove the token
         if (deliveryAgent.fcmToken) {
+          const staleToken = deliveryAgent.fcmToken;
           deliveryAgent.fcmToken = null;
           if (deliveryAgent.fcmTokens && deliveryAgent.fcmTokens.length > 0) {
-            deliveryAgent.fcmTokens = deliveryAgent.fcmTokens.filter(t => t.token !== deliveryAgent.fcmToken);
+            deliveryAgent.fcmTokens = deliveryAgent.fcmTokens.filter(t => t.token !== staleToken);
           }
           await deliveryAgent.save({ validateBeforeSave: false });
           console.error('   ✅ Invalid FCM token removed.');
