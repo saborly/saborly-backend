@@ -177,6 +177,33 @@ exports.getAddressAutocomplete = async (req, res) => {
   }
 };
 
+// Reverse-geocode coordinates into a human-readable address.
+// Public (no auth) — used on the pre-login branch/location selection screen.
+exports.reverseGeocodePublic = async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    if (lat === undefined || lng === undefined) {
+      return res.status(400).json({ success: false, message: 'Missing lat/lng parameters' });
+    }
+
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(
+      lat
+    )},${encodeURIComponent(lng)}&key=${process.env.GOOGLE_API_KEY}&language=en`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.results?.length) {
+      return res.status(404).json({ success: false, message: data.error_message || 'No address found' });
+    }
+
+    res.json({ success: true, address: data.results[0].formatted_address });
+  } catch (error) {
+    console.error('Reverse geocode error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reverse geocode' });
+  }
+};
+
 // Update existing address
 exports.updateAddress = async (req, res) => {
   try {

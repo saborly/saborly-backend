@@ -16,4 +16,8 @@ router.post('/validate', ...branchCtx, addressController.validateAddress);
 router.get('/autocomplete', ...branchCtx, addressController.getAddressAutocomplete);
 router.get('/place-details', ...branchCtx, addressController.getPlaceDetails);
 
+// Public — no auth/branch context required; used on the pre-login
+// branch/location selection screen to show the detected address.
+router.get('/reverse-geocode-public', addressController.reverseGeocodePublic);
+
 module.exports = router;
