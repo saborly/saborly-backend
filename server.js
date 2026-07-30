@@ -32,6 +32,7 @@ const imageProxyRoutes = require('./routes/imageProxyRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const branchRoutes = require('./routes/branchRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
+const reviewsRoutes = require('./routes/reviewsRoutes');
 
 
 const app = express();
@@ -168,6 +169,7 @@ app.use('/api/v1/settings', addCacheHeaders, setting);
 app.use('/api/v1/offer', addCacheHeaders, offers);
 app.use('/api/v1/branches', addCacheHeaders, branchRoutes);
 app.use('/api/v1/promotions', promotionRoutes);
+app.use('/api/v1/reviews', addCacheHeaders, reviewsRoutes);
 
 // Image proxy endpoint with caching
 const imageCache = new Map();

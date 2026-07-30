@@ -20,6 +20,13 @@ const branchSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    /** Google Places `place_id`, resolved lazily and cached here to avoid
+     *  repeat Text Search calls (see controllers/reviewsController.js). */
+    googlePlaceId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     phone: {
       type: String,
       trim: true,
