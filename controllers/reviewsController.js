@@ -70,8 +70,15 @@ async function fetchPlaceDetails(placeId) {
   return data.result;
 }
 
+// Homepage widget is a curated highlight reel, not the full review log —
+// only surface real reviews rated MIN_DISPLAY_RATING and above. This filters
+// which genuine reviews are shown; it never alters or invents review content.
+const MIN_DISPLAY_RATING = 4;
+
 function formatBranchReviews(branch, details) {
   const reviews = (details.reviews || [])
+    .filter((r) => (r.rating ?? 0) >= MIN_DISPLAY_RATING)
+    .sort((a, b) => b.rating - a.rating)
     .slice(0, 5)
     .map((r) => ({
       author: r.author_name,
