@@ -75,7 +75,7 @@ async function fetchPlaceDetails(placeId) {
 // which genuine reviews are shown; it never alters or invents review content.
 const MIN_DISPLAY_RATING = 4;
 
-function formatBranchReviews(branch, details) {
+function formatBranchReviews(branch, details, placeId) {
   const reviews = (details.reviews || [])
     .filter((r) => (r.rating ?? 0) >= MIN_DISPLAY_RATING)
     .sort((a, b) => b.rating - a.rating)
@@ -97,6 +97,10 @@ function formatBranchReviews(branch, details) {
     priceRange: priceLevelToRange(details.price_level),
     category: guessCategory(details.types),
     openNow: details.opening_hours?.open_now ?? null,
+    // Deep link to the real listing on Google Maps, so "see all reviews"
+    // can point users at Google's actual full review list instead of us
+    // trying to reproduce more than the 5 Google's API gives us.
+    mapsUrl: placeId ? `https://www.google.com/maps/place/?q=place_id:${placeId}` : null,
     reviews,
   };
 }
@@ -124,7 +128,7 @@ const getGoogleReviews = async (req, res) => {
           if (!placeId) return null;
 
           const details = await fetchPlaceDetails(placeId);
-          const formatted = formatBranchReviews(branch, details);
+          const formatted = formatBranchReviews(branch, details, placeId);
 
           cache.set(String(branch._id), { data: formatted, expiresAt: Date.now() + CACHE_TTL_MS });
           return formatted;
