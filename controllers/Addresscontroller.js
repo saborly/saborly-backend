@@ -20,7 +20,7 @@ exports.getSavedAddresses = async (req, res) => {
     const addresses = await Address.find({
       branchId: req.branchId,
       userId: req.user._id || req.user.userId || req.user.id,
-    }).sort({ isDefault: -1, createdAt: -1 });
+    }).sort({ isDefault: -1, createdAt: -1 }).lean();
 
     res.json({
       success: true,

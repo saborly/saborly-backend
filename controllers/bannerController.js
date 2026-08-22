@@ -30,12 +30,14 @@ exports.getAllBanners = async (req, res) => {
     if (category) query.category = category;
     if (isActive !== undefined) query.isActive = isActive === 'true';
 
-    const banners = await Banner.find(query)
-      .sort({ order: 1, createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const count = await Banner.countDocuments(query);
+    const [banners, count] = await Promise.all([
+      Banner.find(query)
+        .sort({ order: 1, createdAt: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .lean(),
+      Banner.countDocuments(query),
+    ]);
 
     res.status(200).json({
       success: true,

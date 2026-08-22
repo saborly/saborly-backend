@@ -62,24 +62,29 @@ router.get('/', [
     ];
   }
 
-  const offers = await Offer.find(query)
-    .populate({
-      path: 'appliedToItems',
-      select: 'name imageUrl price originalPrice category isActive',
-      populate: {
-        path: 'category',
-        select: 'name icon'
-      }
-    })
-    .populate('appliedToCategories', 'name icon')
-    .populate({
-      path: 'comboItems.foodItem',
-      select: 'name imageUrl price category'
-    })
-    .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
-    .limit(parseInt(limit))
-    .skip(skip)
-    .select('-usageHistory');
+  // countDocuments uses the same `query` and doesn't depend on the find
+  // results, so run both concurrently instead of one after the other.
+  const [offers, totalOffers] = await Promise.all([
+    Offer.find(query)
+      .populate({
+        path: 'appliedToItems',
+        select: 'name imageUrl price originalPrice category isActive',
+        populate: {
+          path: 'category',
+          select: 'name icon'
+        }
+      })
+      .populate('appliedToCategories', 'name icon')
+      .populate({
+        path: 'comboItems.foodItem',
+        select: 'name imageUrl price category'
+      })
+      .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .select('-usageHistory'),
+    Offer.countDocuments(query),
+  ]);
 
   // Filter out offers already claimed by this device (if deviceId provided)
   let filteredOffers = offers;
@@ -119,7 +124,6 @@ router.get('/', [
     return offerObj;
   });
 
-  const totalOffers = await Offer.countDocuments(query);
   const totalPages = Math.ceil(totalOffers / limit);
 
   res.json({
@@ -415,7 +419,7 @@ router.get('/device-claims', [
     const offers = await Offer.find({
       branchId: req.branchId,
       'claimedDevices.deviceId': deviceId
-    }).select('_id title type claimedDevices');
+    }).select('_id title type claimedDevices').lean();
 
     // Extract claim info for this device
     const claimedOffers = offers.map(offer => {
@@ -568,7 +572,7 @@ router.post('/', [
       _id: { $in: req.body.appliedToItems },
       branchId: req.branchId,
       isActive: true
-    });
+    }).select('_id').lean();
 
     if (items.length !== req.body.appliedToItems.length) {
       return res.status(400).json({
@@ -627,7 +631,7 @@ router.put('/:id', [
       _id: { $in: req.body.appliedToItems },
       branchId: req.branchId,
       isActive: true
-    });
+    }).select('_id').lean();
 
     if (items.length !== req.body.appliedToItems.length) {
       return res.status(400).json({

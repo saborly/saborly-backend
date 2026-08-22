@@ -96,7 +96,7 @@ exports.sendPromotion = async (req, res) => {
       query._id = { $in: userIds };
     }
 
-    const users = await User.find(query).select('_id email firstName');
+    const users = await User.find(query).select('_id email firstName').lean();
 
     if (users.length === 0) {
       return res.status(200).json({

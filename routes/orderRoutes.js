@@ -250,25 +250,25 @@ const {
   if (applyFirstOrderDiscount === true && platform === 'mobile' && deviceId) {
     const userId = req.user._id || req.user.id;
 
-    // Global setting check
-    const Setting = require('../models/Setting');
-    const settings = await Setting.findOne({ branchId: effectiveBranchId }).select('firstOrderDiscountSettings');
-    const discountEnabled = settings?.firstOrderDiscountSettings?.isEnabled !== false;
-
-    // Account check: user hasn't already used this discount
+    // These four checks are independent of each other — run them concurrently
+    // instead of as four sequential round trips.
     const User = require('../models/User');
-    const userDoc = await User.findById(userId).select('firstOrderDiscount');
+    const Setting = require('../models/Setting');
+    const [settings, userDoc, priorOrderCount, deviceUsed] = await Promise.all([
+      // Global setting check
+      Setting.findOne({ branchId: effectiveBranchId }).select('firstOrderDiscountSettings'),
+      // Account check: user hasn't already used this discount
+      User.findById(userId).select('firstOrderDiscount'),
+      // Account check: user has no previous non-cancelled orders
+      Order.countDocuments({
+        userId,
+        branchId: effectiveBranchId,
+        status: { $nin: ['cancelled'] }
+      }),
+      // Device check: this device hasn't used the discount before
+      FirstOrderDevice.findOne({ deviceId, branchId: effectiveBranchId }),
+    ]);
     const accountUnused = !userDoc?.firstOrderDiscount?.used;
-
-    // Account check: user has no previous non-cancelled orders
-    const priorOrderCount = await Order.countDocuments({
-      userId,
-      branchId: effectiveBranchId,
-      status: { $nin: ['cancelled'] }
-    });
-
-    // Device check: this device hasn't used the discount before
-    const deviceUsed = await FirstOrderDevice.findOne({ deviceId, branchId: effectiveBranchId });
 
     if (discountEnabled && accountUnused && priorOrderCount === 0 && !deviceUsed) {
       const pct = (settings?.firstOrderDiscountSettings?.discountPercentage ?? 20) / 100;
@@ -366,7 +366,7 @@ const {
           ],
         },
       ],
-    }).select('firstName lastName email fcmToken fcmTokens');
+    }).select('firstName lastName email fcmToken fcmTokens').lean();
 
     const branchIdForTopic = targetBranchId?.toString?.() || '';
     const sendBranchTopicFallback = async () => {
@@ -641,32 +641,39 @@ router.get('/first-order-discount/check', [
   const { deviceId } = req.query;
   const userId = req.user._id || req.user.id;
 
-  // Global setting check: is the first-order discount enabled by admin?
+  // These four independent checks are fetched concurrently, then evaluated
+  // in the exact same priority order as before (disabled_by_admin →
+  // account_used → has_orders → device_used) so the returned `reason` is
+  // unchanged for every case — only the fetching is now parallel.
   const Setting = require('../models/Setting');
-  const settings = await Setting.findOne({ branchId: req.branchId }).select('firstOrderDiscountSettings');
+  const [settings, user, existingOrderCount, deviceRecord] = await Promise.all([
+    Setting.findOne({ branchId: req.branchId }).select('firstOrderDiscountSettings'),
+    require('../models/User').findById(userId).select('firstOrderDiscount'),
+    Order.countDocuments({
+      userId,
+      branchId: req.branchId,
+      status: { $nin: ['cancelled'] }
+    }),
+    FirstOrderDevice.findOne({ deviceId, branchId: req.branchId }),
+  ]);
+
+  // Global setting check: is the first-order discount enabled by admin?
   const discountEnabled = settings?.firstOrderDiscountSettings?.isEnabled !== false; // default true
   if (!discountEnabled) {
     return res.json({ success: true, eligible: false, reason: 'disabled_by_admin' });
   }
 
   // Account check: has this user already used the first-order discount?
-  const user = await require('../models/User').findById(userId).select('firstOrderDiscount');
   if (user?.firstOrderDiscount?.used) {
     return res.json({ success: true, eligible: false, reason: 'account_used' });
   }
 
   // Account check: does this user already have a non-cancelled order?
-  const existingOrderCount = await Order.countDocuments({
-    userId,
-    branchId: req.branchId,
-    status: { $nin: ['cancelled'] }
-  });
   if (existingOrderCount > 0) {
     return res.json({ success: true, eligible: false, reason: 'has_orders' });
   }
 
   // Device check: has this device already used the first-order discount on any account?
-  const deviceRecord = await FirstOrderDevice.findOne({ deviceId, branchId: req.branchId });
   if (deviceRecord) {
     return res.json({ success: true, eligible: false, reason: 'device_used' });
   }
@@ -787,15 +794,15 @@ router.patch('/:id/status', [
   // Save the order after all updates
   await order.save();
 
-  // Single populate query — no redundant lean check
-  const orderDoc = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
-    .populate([
-      { path: 'userId', select: 'firstName lastName email phone' },
-      { path: 'items.foodItem', select: 'name imageUrl price description' },
-      { path: 'branchId', select: 'name address phone' },
-      { path: 'deliveryAgent', select: 'firstName lastName phone' }
-    ]);
-  
+  // `order` already has the just-saved status/tracking in memory — populate
+  // its refs in place instead of re-fetching the whole document from Mongo.
+  const orderDoc = await order.populate([
+    { path: 'userId', select: 'firstName lastName email phone' },
+    { path: 'items.foodItem', select: 'name imageUrl price description' },
+    { path: 'branchId', select: 'name address phone' },
+    { path: 'deliveryAgent', select: 'firstName lastName phone' }
+  ]);
+
   const orderUserId = orderDoc.userId._id ? orderDoc.userId._id.toString() : orderDoc.userId.toString();
 
   await sendOrderStatusNotification(
@@ -856,13 +863,27 @@ router.patch('/:id/cancel', [
   // Apply cancellation logic (no save yet)
   order.cancelOrder(reason, cancelledBy);
 
-  // Restore stock
+  // Restore stock — batch-fetch all items in one query (same pattern used at
+  // order-creation time above) instead of one findOne+save per cart line.
+  const restoreItemIds = order.items.map(item => item.foodItem);
+  const restoreFoodItems = await FoodItem.find({ _id: { $in: restoreItemIds }, branchId: req.branchId });
+  const restoreFoodItemMap = Object.fromEntries(restoreFoodItems.map(f => [f._id.toString(), f]));
+
+  // Aggregate quantities per food item first — the same food item can appear
+  // as multiple cart lines, and calling save() twice in parallel on the same
+  // Mongoose document instance throws "Can't save() the same doc multiple
+  // times in parallel".
+  const restoreQuantityByFoodItemId = {};
   for (const item of order.items) {
-    const foodItem = await FoodItem.findOne({ _id: item.foodItem, branchId: req.branchId });
-    if (foodItem) {
-      await foodItem.updateStock(item.quantity, 'add');
-    }
+    const foodItemId = item.foodItem.toString();
+    restoreQuantityByFoodItemId[foodItemId] = (restoreQuantityByFoodItemId[foodItemId] || 0) + item.quantity;
   }
+
+  await Promise.all(
+    Object.entries(restoreQuantityByFoodItemId)
+      .filter(([foodItemId]) => restoreFoodItemMap[foodItemId])
+      .map(([foodItemId, quantity]) => restoreFoodItemMap[foodItemId].updateStock(quantity, 'add'))
+  );
 
   // SINGLE SAVE — ONLY HERE!
   await order.save();

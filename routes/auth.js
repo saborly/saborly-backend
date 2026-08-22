@@ -117,13 +117,13 @@ router.post('/register', [
   const existingUser = await User.findOne({
     branchId: req.branchId,
     $or: [{ email }, { phone }]
-  });
+  }).select('email').lean();
 
   if (existingUser) {
     return res.status(400).json({
       success: false,
-      message: existingUser.email === email 
-        ? 'Email already registered' 
+      message: existingUser.email === email
+        ? 'Email already registered'
         : 'Phone number already registered'
     });
   }
@@ -243,7 +243,7 @@ router.post('/verify-registration', [
   const existingUser = await User.findOne({
     branchId: req.branchId,
     $or: [{ email: pendingData.email }, { phone: pendingData.phone }]
-  });
+  }).select('_id').lean();
 
   if (existingUser) {
     pendingRegistrations.delete(email);
@@ -945,8 +945,8 @@ router.patch('/profile', [
       phone,
       branchId: req.branchId,
       _id: { $ne: req.user.id }
-    });
-    
+    }).select('_id').lean();
+
     if (existingUser) {
       return res.status(400).json({
         success: false,

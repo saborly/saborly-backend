@@ -115,14 +115,15 @@ exports.getAllContacts = async (req, res) => {
       ];
     }
 
-    const contacts = await Contact.find(query)
-      .populate('userId', 'firstName lastName email')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .lean();
-
-    const count = await Contact.countDocuments(query);
+    const [contacts, count] = await Promise.all([
+      Contact.find(query)
+        .populate('userId', 'firstName lastName email')
+        .sort({ createdAt: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .lean(),
+      Contact.countDocuments(query),
+    ]);
 
     res.status(200).json({
       success: true,

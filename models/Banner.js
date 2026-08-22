@@ -80,7 +80,7 @@ bannerSchema.statics.getActiveBanners = async function(branchId, category = null
     query.category = category;
   }
 
-  return this.find(query).sort({ order: 1, createdAt: -1 });
+  return this.find(query).sort({ order: 1, createdAt: -1 }).lean();
 };
 
 module.exports = mongoose.model('Banner', bannerSchema);

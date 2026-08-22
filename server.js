@@ -275,6 +275,10 @@ const setupIndexes = async () => {
     await db.collection('fooditems').createIndex({ isActive: 1 });
     await db.collection('fooditems').createIndex({ isFeatured: 1 });
     await db.collection('fooditems').createIndex({ isPopular: 1 });
+    // Match GET /food-items/featured's actual filter+sort shape (branchId+isFeatured+isActive, sorted by createdAt)
+    await db.collection('fooditems').createIndex({ branchId: 1, isFeatured: 1, isActive: 1, createdAt: -1 });
+    // Match GET /food-items/popular's actual filter+sort shape (branchId+isActive, sorted by totalSold)
+    await db.collection('fooditems').createIndex({ branchId: 1, isActive: 1, totalSold: -1 });
 
     // Categories collection indexes (with multilingual support)
     await db.collection('categories').createIndex({
@@ -292,6 +296,8 @@ const setupIndexes = async () => {
     await db.collection('orders').createIndex({ status: 1 });
     await db.collection('orders').createIndex({ createdAt: -1 });
     await db.collection('orders').createIndex({ branchId: 1 });
+    // Match GET /orders/getall's actual filter+sort shape (admin order list, branchId+status, sorted by createdAt)
+    await db.collection('orders').createIndex({ branchId: 1, status: 1, createdAt: -1 });
 
     console.log('Database indexes created successfully (with multilingual support)');
   } catch (error) {

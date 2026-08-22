@@ -38,7 +38,7 @@ const ORDER_MESSAGES = {
 
 const sendOrderStatusNotification = async (user, order, status, customMessage = null) => {
   
-  const tuser = await User.findById(user);
+  const tuser = await User.findById(user).select('fcmToken fcmTokens email');
 
   const fcmToken = tuser?.fcmToken;
 

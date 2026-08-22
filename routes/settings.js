@@ -46,7 +46,7 @@ router.get('/', [
 // @access  Public
 router.get('/public', attachBranchToRequest, resolveBranchContext, asyncHandler(async (req, res) => {
   const settings = await Setting.findOne({ branchId: req.branchId })
-    .select('-paymentGateways.secretKey -paymentGateways.webhookSecret -emailSettings.smtpPassword -smsSettings.apiSecret');
+    .select('restaurantName description logo address contactPhone contactEmail websiteUrl operatingHours timezone currency deliverySettings pickupSettings socialMedia theme maintenanceMode firstOrderDiscountSettings');
   
   if (!settings) {
     return res.status(404).json({
