@@ -115,8 +115,14 @@ if (process.env.NODE_ENV === 'development') {
 app.use(detectLanguage);
 
 // ─── Local image storage — serve /uploads as public static files ──────────────
+// Every upload gets a brand-new uuid+timestamp filename (see
+// middleware/upload.middleware.js) — a URL is never reused for different
+// content, so long-lived immutable caching is safe: a replaced photo gets a
+// new URL instead of overwriting the old one, and nothing ever needs the old
+// URL to serve fresh content again.
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
-  maxAge: '7d',          // Browser cache for 7 days
+  maxAge: '365d',
+  immutable: true,
   etag: true,
   setHeaders: (res) => {
     res.set('Access-Control-Allow-Origin', '*');
