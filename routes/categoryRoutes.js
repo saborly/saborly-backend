@@ -181,12 +181,13 @@ router.put('/:id', [
   
   // Handle multilingual description
   if (req.body.description) {
+    const existingDescription = category.description || {};
     updateData.description = {
-      en: req.body.description.en || category.description.en,
-      es: req.body.description.es || category.description.es || '',
-      ca: req.body.description.ca || category.description.ca || '',
-      ar: req.body.description.ar || category.description.ar || '',
-      fr: req.body.description.fr || category.description.fr || '' // Added French
+      en: req.body.description.en || existingDescription.en || '',
+      es: req.body.description.es || existingDescription.es || '',
+      ca: req.body.description.ca || existingDescription.ca || '',
+      ar: req.body.description.ar || existingDescription.ar || '',
+      fr: req.body.description.fr || existingDescription.fr || '' // Added French
     };
   }
   
