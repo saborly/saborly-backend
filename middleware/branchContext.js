@@ -4,6 +4,25 @@ const asyncHandler = require('./asyncHandler');
 const { normalizeRole, isSuperAdmin, canLoginAnyBranch } = require('../utils/roles');
 let defaultBranchIdCache = null;
 
+// resolveBranchContext runs on almost every API request, and previously did
+// a fresh Branch.findById() round-trip to Mongo Atlas every single time just
+// to check isActive — branch docs change essentially never, so a short TTL
+// cache removes one full network round-trip from every request without
+// changing what's returned (same data, just briefly reused).
+const BRANCH_DOC_CACHE_TTL_MS = 60 * 1000;
+const branchDocCache = new Map(); // branchIdStr -> { doc, expiresAt }
+
+async function getBranchDocCached(branchIdStr) {
+  const cached = branchDocCache.get(branchIdStr);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.doc;
+  }
+
+  const branchDoc = await Branch.findById(branchIdStr).lean();
+  branchDocCache.set(branchIdStr, { doc: branchDoc, expiresAt: Date.now() + BRANCH_DOC_CACHE_TTL_MS });
+  return branchDoc;
+}
+
 function readBranchIdFromRequest(req) {
   const h = req.headers['x-branch-id'];
   if (h != null && String(h).trim()) return String(h).trim();
@@ -113,7 +132,7 @@ const resolveBranchContext = asyncHandler(async (req, res, next) => {
     return res.status(400).json({ success: false, message: 'Invalid branchId' });
   }
 
-  const branchDoc = await Branch.findById(branchIdStr).lean();
+  const branchDoc = await getBranchDocCached(branchIdStr);
   if (!branchDoc || branchDoc.isActive === false) {
     return res.status(404).json({
       success: false,
