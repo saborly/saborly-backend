@@ -16,6 +16,23 @@ const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
 const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
+const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
+
+// Same 3.5km delivery radius enforced when saving an address
+// (controllers/Addresscontroller.js) — re-checked here because a client
+// could otherwise send an arbitrary deliveryAddress directly in the order
+// payload without ever going through the saved-address flow.
+const MAX_DELIVERY_DISTANCE = 3.5; // km
+
+// Mirrors Addresscontroller.js's getShopCoords: uses the resolved branch's
+// coordinates, falling back to the Barcelona main branch if unset.
+function getShopCoords(req) {
+  const doc = req.branchDoc;
+  if (doc && doc.latitude != null && doc.longitude != null) {
+    return { lat: doc.latitude, lng: doc.longitude };
+  }
+  return { lat: 41.4036344, lng: 2.1986439 };
+}
 
 const normalizeStringValue = (value) => {
   if (value === null || value === undefined) return value;
@@ -179,6 +196,32 @@ const {
       success: false,
       message: 'Delivery address is required for delivery orders'
     });
+  }
+
+  // Enforce the delivery radius server-side, regardless of how the client
+  // arrived at this address (saved address, one-off entry, stale client
+  // state, etc.) — this is the actual gate that decides whether an order
+  // gets accepted, so it must not rely solely on the separate check that
+  // runs when an address is saved.
+  if (deliveryType === 'delivery') {
+    const { latitude, longitude } = deliveryAddress;
+    if (!validateCoordinates(latitude, longitude)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Delivery address is missing valid coordinates'
+      });
+    }
+
+    const shop = getShopCoords(req);
+    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
+
+    if (distance > MAX_DELIVERY_DISTANCE) {
+      return res.status(400).json({
+        success: false,
+        message: `Address is beyond our ${MAX_DELIVERY_DISTANCE}km delivery range`,
+        distance: distance.toFixed(1)
+      });
+    }
   }
 
   // Always trust backend-resolved branch context to avoid client branch drift.
