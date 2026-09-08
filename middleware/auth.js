@@ -27,8 +27,9 @@ const auth = asyncHandler(async (req, res, next) => {
 
     // Check if user still exists (use lean() and select only needed fields for better performance)
     const userId = decoded.userId || decoded.id;
-    const user = await User.findById(userId).select('isActive lastActivity role email branchId').lean();
-    
+const user = await User.findById(userId)
+  .select('isActive lastActivity role email branchId firstName lastName phone')
+  .lean();    
     if (!user) {
       console.log('Auth Middleware: No user found for ID:', userId);
       return res.status(401).json({
@@ -84,6 +85,9 @@ const auth = asyncHandler(async (req, res, next) => {
       role: user.role,
       email: user.email,
       branchId: user.branchId,
+      firstName: user.firstName || '',
+      lastName: user.lastName || '',
+      phone: user.phone || '',
       /** Branch id embedded at login (generateAuthToken(sessionBranchId)) — not the user's home branch in DB */
       sessionBranchId: sessionFromToken,
     };

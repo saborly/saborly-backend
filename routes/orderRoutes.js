@@ -154,6 +154,8 @@ router.post('/', [
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
   body('subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be a positive number'),
   body('total').isFloat({ min: 0 }).withMessage('Total must be a positive number'),
+    body('contactPhone').optional({ values: 'falsy' }).trim()
+    .matches(/^\+?[\d\s\-()]{6,20}$/).withMessage('Invalid phone number'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -324,10 +326,16 @@ const {
   const total = firstOrderDiscountApplied
     ? Math.round((subtotal + deliveryFee + tax - discount) * 100) / 100
     : (clientTotal !== undefined ? clientTotal : (subtotal + deliveryFee + tax - discount));
+  const contactPhone = (req.body.contactPhone || req.user.phone || '').trim();
 
+ 
   // orderNumber is generated in the Order pre-save hook (timestamp + random suffix)
   const orderData = {
     userId: req.user._id || req.user.id,
+    customerName: [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim(),
+    customerEmail: req.user.email || '',
+    customerPhone: contactPhone,
+    contactStatus: contactPhone ? 'ok' : 'missing-phone',
     items: processedItems,
     subtotal,
     deliveryFee,
@@ -346,7 +354,13 @@ const {
   if (codPaymentType) {
     orderData.codPaymentType = codPaymentType;
   }
-
+   if (contactPhone && contactPhone !== req.user.phone) {
+    User.findByIdAndUpdate(
+      req.user._id,
+      { phone: contactPhone, needsPhone: false },
+      { runValidators: true }
+    ).catch(() => {});
+  }
   const order = await Order.create(orderData);
 
   // Persist first-order discount usage so it cannot be reused
@@ -366,16 +380,17 @@ const {
         branchId: effectiveBranchId,
         userId,
         orderId: order._id,
-        discountAmount: discount
+        discountAmount: discount,
+        
       }).catch(() => {})  // ignore duplicate key on race
     ]);
   }
 
   // Populate order details
   await order.populate([
-    { path: 'userId', select: 'firstName lastName email phone' },
-    { path: 'items.foodItem', select: 'name imageUrl price' },
-    { path: 'branchId', select: 'name address phone' }
+    { path: 'userId', select: 'firstName lastName email phone fcmToken' },
+        { path: 'items.foodItem', select: 'name imageUrl price' },
+    { path: 'branchId', select: 'name address phone' },
   ]);
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();

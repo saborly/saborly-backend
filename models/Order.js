@@ -67,6 +67,7 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  
   items: [cartItemSchema],
   subtotal: {
     type: Number,
