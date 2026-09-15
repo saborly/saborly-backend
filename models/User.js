@@ -89,8 +89,25 @@ phone: {
   addresses: [addressSchema],
   role: {
     type: String,
-    enum: ['user', 'admin', 'manager', 'super_admin', 'branch_admin', 'staff', 'superadmin'],
+    enum: ['user', 'admin', 'manager', 'super_admin', 'branch_admin', 'staff', 'superadmin', 'driver'],
     default: 'user'
+  },
+  // Only meaningful when role === 'driver'; left undefined for every other role.
+  driverStatus: {
+    isOnline: { type: Boolean, default: false },
+    isAvailable: { type: Boolean, default: true },
+    vehicleType: {
+      type: String,
+      enum: ['bike', 'motorcycle', 'car', 'on_foot']
+    },
+    currentLocation: {
+      latitude: Number,
+      longitude: Number,
+      heading: Number,
+      speed: Number,
+      updatedAt: Date
+    },
+    lastSeenAt: Date
   },
   isActive: {
     type: Boolean,
@@ -369,5 +386,8 @@ userSchema.methods.removeFCMToken = async function(deviceId) {
   
   return this.save({ validateBeforeSave: false });
 };
+
+// Cheap "available drivers in branch" lookups for the admin assign-driver picker.
+userSchema.index({ branchId: 1, 'driverStatus.isOnline': 1 });
 
 module.exports = mongoose.model('User', userSchema);

@@ -22,6 +22,18 @@ const ORDER_MESSAGES = {
     title: '🎉 Order Ready',
     body: 'Your order is ready for pickup!'
   },
+  driverpickup: {
+    title: '🛵 Driver Picked Up Your Order',
+    body: 'Your order has been picked up and will be on its way shortly.'
+  },
+  pickup: {
+    title: '🛵 Driver Picked Up Your Order',
+    body: 'Your order has been picked up and will be on its way shortly.'
+  },
+  shop: {
+    title: '🎉 Order Ready for Pickup',
+    body: 'Your order is ready to be collected!'
+  },
   'out-for-delivery': {
     title: '🚗 Out for Delivery',
     body: 'Your order is on its way to you!'
@@ -33,6 +45,10 @@ const ORDER_MESSAGES = {
   cancelled: {
     title: '❌ Order Cancelled',
     body: 'Your order has been cancelled.'
+  },
+  refunded: {
+    title: '💳 Order Refunded',
+    body: 'Your order has been refunded.'
   }
 };
 
@@ -49,8 +65,7 @@ const sendOrderStatusNotification = async (user, order, status, customMessage = 
       return { success: false, message: 'No FCM token' };
     }
 
-    const message = ORDER_MESSAGES[status];
-  
+    const message = ORDER_MESSAGES[status] || { title: '📦 Order Update', body: `Your order status is now ${status}.` };
 
     const title = customMessage?.title || message.title;
     const body = customMessage?.body || message.body;

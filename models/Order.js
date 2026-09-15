@@ -189,6 +189,23 @@ codPaymentType: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  // Denormalized "latest known position" snapshot for fast reads (tracking
+  // REST fallback, admin dashboard hydration) without joining the
+  // DriverLocationPing history collection. Written by the socket layer at a
+  // throttled cadence, never on every raw GPS tick.
+  deliveryTracking: {
+    currentLocation: {
+      latitude: Number,
+      longitude: Number,
+      heading: Number,
+      speed: Number,
+      updatedAt: Date
+    },
+    isLive: { type: Boolean, default: false },
+    startedAt: Date,
+    endedAt: Date,
+    lastPingAt: Date
+  },
   trackingUpdates: [{
     status: String,
     message: String,
@@ -260,6 +277,8 @@ orderSchema.index({ 'deliveryAddress.apartment': 1 });
 // Compound index for common queries
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ userId: 1, status: 1 });
+// Driver's active-order / assigned-orders lookups (routes/driverRoutes.js)
+orderSchema.index({ deliveryAgent: 1, status: 1 });
 
 // Virtual for status display
 orderSchema.virtual('statusDisplay').get(function() {

@@ -11,12 +11,19 @@ const asyncHandler = require('../middleware/asyncHandler');
 const Branch = require('../models/Branch');
 const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const router = express.Router();
-const { sendOrderStatusNotification, sendNewOrderNotification } = require('../utils/notificationService');
+const {
+  sendOrderStatusNotification,
+  sendNewOrderNotification,
+  sendDeliveryAssignmentNotification,
+} = require('../utils/notificationService');
 const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
 const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
+const { getTrackingStage, getTrackingStageLabel } = require('../utils/trackingStageMap');
+
+const STAFF_ROLES = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
 
 // Same 3.5km delivery radius enforced when saving an address
 // (controllers/Addresscontroller.js) — re-checked here because a client
@@ -799,6 +806,150 @@ if (
   });
 }));
 
+// @desc    Get live tracking info for an order (REST fallback / initial paint
+//          before the socket connects — see sockets/orderTrackingHandlers.js
+//          for the live-update channel)
+// @route   GET /api/v1/orders/:id/tracking
+// @access  Private (owner, assigned driver, or branch staff)
+router.get('/:id/tracking', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  param('id').isMongoId().withMessage('Invalid order ID')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId })
+    .populate([
+      { path: 'deliveryAgent', select: 'firstName lastName phone driverStatus' },
+      { path: 'branchId', select: 'name latitude longitude phone' }
+    ]);
+
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+
+  const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
+  const isOwner = order.userId.toString() === currentUserId;
+  const isAssignedDriver = order.deliveryAgent && order.deliveryAgent._id.toString() === currentUserId;
+  const isStaff = STAFF_ROLES.includes(req.user.role);
+
+  if (!isOwner && !isAssignedDriver && !isStaff) {
+    return res.status(403).json({ success: false, message: 'Not authorized to access this order tracking' });
+  }
+
+  const lastPingAt = order.deliveryTracking?.lastPingAt;
+  const isStale = Boolean(
+    order.deliveryTracking?.isLive &&
+    lastPingAt &&
+    (Date.now() - new Date(lastPingAt).getTime()) > 60000
+  );
+
+  res.json({
+    success: true,
+    tracking: {
+      orderId: order._id,
+      status: order.status,
+      trackingStage: getTrackingStage(order.status),
+      trackingStageLabel: getTrackingStageLabel(order.status),
+      driver: order.deliveryAgent
+        ? {
+            id: order.deliveryAgent._id,
+            firstName: order.deliveryAgent.firstName,
+            lastName: order.deliveryAgent.lastName,
+            phone: order.deliveryAgent.phone,
+            vehicleType: order.deliveryAgent.driverStatus?.vehicleType || null
+          }
+        : null,
+      location: order.deliveryTracking?.currentLocation || null,
+      isLive: Boolean(order.deliveryTracking?.isLive),
+      isStale,
+      startedAt: order.deliveryTracking?.startedAt || null,
+      branch: order.branchId
+        ? { name: order.branchId.name, latitude: order.branchId.latitude, longitude: order.branchId.longitude }
+        : null,
+      destination: order.deliveryAddress
+        ? {
+            latitude: order.deliveryAddress.latitude,
+            longitude: order.deliveryAddress.longitude,
+            address: order.deliveryAddress.address
+          }
+        : null
+    }
+  });
+}));
+
+// @desc    Assign a driver to an order
+// @route   PATCH /api/v1/orders/:id/assign-driver
+// @access  Private (Admin/Manager only)
+router.patch('/:id/assign-driver', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  param('id').isMongoId().withMessage('Invalid order ID'),
+  body('driverId').isMongoId().withMessage('Invalid driver ID')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+
+  const { driverId } = req.body;
+
+  const [order, driver] = await Promise.all([
+    Order.findOne({ _id: req.params.id, branchId: req.branchId }),
+    User.findOne({ _id: driverId, branchId: req.branchId, role: 'driver' })
+  ]);
+
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+  if (!driver) {
+    return res.status(404).json({ success: false, message: 'Driver not found in this branch' });
+  }
+  if (['delivered', 'cancelled', 'refunded'].includes(order.status)) {
+    return res.status(400).json({ success: false, message: 'Cannot assign a driver to a completed order' });
+  }
+
+  order.deliveryAgent = driver._id;
+  await order.save();
+
+  try {
+    await sendDeliveryAssignmentNotification(driver, order);
+  } catch (err) {
+    console.error('Delivery assignment notification failed:', err.message);
+  }
+
+  const io = req.app.get('io');
+  if (io) {
+    const driverPayload = {
+      id: driver._id.toString(),
+      firstName: driver.firstName,
+      lastName: driver.lastName,
+      phone: driver.phone,
+      vehicleType: driver.driverStatus?.vehicleType || null
+    };
+    io.to(`driver:${driver._id.toString()}`).emit('order:driver_assigned', {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber
+    });
+    io.to(`order:${order._id.toString()}`).emit('order:driver_assigned', {
+      orderId: order._id.toString(),
+      driver: driverPayload
+    });
+  }
+
+  res.json({
+    success: true,
+    message: 'Driver assigned successfully',
+    order: { id: order._id, deliveryAgent: order.deliveryAgent }
+  });
+}));
+
 // @desc    Update order status
 // @route   PATCH /api/v1/orders/:id/status
 // @access  Private (Admin/Manager only)
@@ -870,6 +1021,18 @@ router.patch('/:id/status', [
     message ? { title: '📦 Order Update', body: message } : null
   );
 
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`order:${orderDoc._id.toString()}`).emit('order:status_changed', {
+      orderId: orderDoc._id.toString(),
+      status,
+      trackingStage: getTrackingStage(status),
+      trackingStageLabel: getTrackingStageLabel(status),
+      message: message || null,
+      timestamp: new Date().toISOString()
+    });
+  }
+
   res.json({
     success: true,
     message: 'Order status updated successfully',
@@ -878,6 +1041,100 @@ router.patch('/:id/status', [
       status: orderDoc.status,
       estimatedTimeRemaining: orderDoc.estimatedTimeRemaining
     }
+  });
+}));
+
+// @desc    Driver-only delivery status update (picked up / out for delivery /
+//          delivered) — kept deliberately separate from the admin/manager
+//          PATCH /:id/status above so that endpoint's existing authorization
+//          and validators stay completely untouched.
+// @route   PATCH /api/v1/orders/:id/driver-status
+// @access  Private (assigned driver only)
+router.patch('/:id/driver-status', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('driver'),
+  param('id').isMongoId().withMessage('Invalid order ID'),
+  body('status').isIn(['driverpickup', 'pickup', 'out-for-delivery', 'delivered']).withMessage('Invalid status'),
+  body('message').optional().trim()
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, errors: errors.array() });
+  }
+
+  const { status, message } = req.body;
+  const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
+
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+
+  const currentUserId = (req.user._id || req.user.id || req.user.userId)?.toString();
+  if (!order.deliveryAgent || order.deliveryAgent.toString() !== currentUserId) {
+    return res.status(403).json({ success: false, message: 'You are not the assigned driver for this order' });
+  }
+
+  const location = order.deliveryTracking?.currentLocation
+    ? {
+        latitude: order.deliveryTracking.currentLocation.latitude,
+        longitude: order.deliveryTracking.currentLocation.longitude
+      }
+    : null;
+
+  order.addTrackingUpdate(status, message || `Order status updated to ${status}`, location);
+
+  if (status === 'delivered') {
+    order.actualDeliveryTime = new Date();
+    order.deliveryTracking = order.deliveryTracking || {};
+    order.deliveryTracking.isLive = false;
+    order.deliveryTracking.endedAt = new Date();
+    order.markModified('deliveryTracking');
+  }
+
+  order.markModified('status');
+  await order.save();
+
+  const orderDoc = await order.populate([{ path: 'userId', select: 'firstName lastName email phone' }]);
+  const orderUserId = orderDoc.userId._id ? orderDoc.userId._id.toString() : orderDoc.userId.toString();
+
+  try {
+    await sendOrderStatusNotification(
+      orderUserId,
+      orderDoc,
+      status,
+      message ? { title: '📦 Order Update', body: message } : null
+    );
+  } catch (err) {
+    console.error('Driver-status notification failed:', err.message);
+  }
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`order:${order._id.toString()}`).emit('order:status_changed', {
+      orderId: order._id.toString(),
+      status,
+      trackingStage: getTrackingStage(status),
+      trackingStageLabel: getTrackingStageLabel(status),
+      message: message || null,
+      timestamp: new Date().toISOString()
+    });
+    if (status === 'out-for-delivery') {
+      io.to(`order:${order._id.toString()}`).emit('order:driver_started', { orderId: order._id.toString() });
+    }
+    if (status === 'delivered') {
+      io.to(`order:${order._id.toString()}`).emit('order:driver_ended', {
+        orderId: order._id.toString(),
+        reason: 'delivered'
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    message: 'Delivery status updated successfully',
+    order: { id: order._id, status: order.status }
   });
 }));
 
@@ -956,6 +1213,18 @@ router.patch('/:id/cancel', [
     );
   } catch (err) {
     console.error('Notification failed:', err);
+  }
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`order:${order._id.toString()}`).emit('order:status_changed', {
+      orderId: order._id.toString(),
+      status: order.status,
+      trackingStage: getTrackingStage(order.status),
+      trackingStageLabel: getTrackingStageLabel(order.status),
+      message: reason,
+      timestamp: new Date().toISOString()
+    });
   }
 
   res.json({

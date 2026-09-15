@@ -33,6 +33,8 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const branchRoutes = require('./routes/branchRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
 const reviewsRoutes = require('./routes/reviewsRoutes');
+const driverRoutes = require('./routes/driverRoutes');
+const { init: initSocketIO } = require('./sockets');
 
 
 const app = express();
@@ -176,6 +178,7 @@ app.use('/api/v1/offer', addCacheHeaders, offers);
 app.use('/api/v1/branches', addCacheHeaders, branchRoutes);
 app.use('/api/v1/promotions', promotionRoutes);
 app.use('/api/v1/reviews', addCacheHeaders, reviewsRoutes);
+app.use('/api/v1/drivers', driverRoutes); // Don't cache — live delivery/driver state
 
 // Image proxy endpoint with caching
 const imageCache = new Map();
@@ -330,6 +333,10 @@ const server = app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   console.log(`Supported languages: English (en), Spanish (es), Catalan (ca), Arabic (ar)`);
 });
+
+// Real-time order/driver tracking layer — attaches to the same persistent
+// HTTP server, exposes `io` to REST routes via app.get('io').
+initSocketIO(server, app);
 
 // Connect to MongoDB
 connectDB();
