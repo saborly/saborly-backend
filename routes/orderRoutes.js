@@ -322,6 +322,7 @@ const {
       FirstOrderDevice.findOne({ deviceId, branchId: effectiveBranchId }),
     ]);
     const accountUnused = !userDoc?.firstOrderDiscount?.used;
+    const discountEnabled = settings?.firstOrderDiscountSettings?.isEnabled !== false; // default true
 
     if (discountEnabled && accountUnused && priorOrderCount === 0 && !deviceUsed) {
       const pct = (settings?.firstOrderDiscountSettings?.discountPercentage ?? 20) / 100;
