@@ -261,7 +261,7 @@ router.get('/available', [
     role: 'driver',
     isActive: true
   })
-    .select('firstName lastName phone driverStatus')
+    .select('firstName lastName email phone driverStatus createdAt')
     .sort({ 'driverStatus.isOnline': -1, firstName: 1 });
 
   res.json({ success: true, drivers });
