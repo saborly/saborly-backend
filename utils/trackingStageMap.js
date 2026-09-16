@@ -15,7 +15,8 @@ const STATUS_TO_STAGE = {
   'out-for-delivery': 4,
   delivered: 5,
   cancelled: -1,
-  refunded: -1
+  refunded: -1,
+  'failed-delivery': -2
 };
 
 const STAGE_LABELS = {
@@ -34,6 +35,7 @@ function getTrackingStage(status) {
 
 function getTrackingStageLabel(status) {
   const stage = getTrackingStage(status);
+  if (stage === -2) return 'Delivery Failed';
   if (stage === -1) return status === 'refunded' ? 'Refunded' : 'Cancelled';
   return STAGE_LABELS[stage] || status;
 }

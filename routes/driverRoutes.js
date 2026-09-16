@@ -77,7 +77,7 @@ router.get('/me/assigned-orders', [
   if (req.query.status) {
     filter.status = req.query.status;
   } else {
-    filter.status = { $nin: ['delivered', 'cancelled', 'refunded'] };
+    filter.status = { $nin: ['delivered', 'cancelled', 'refunded', 'failed-delivery'] };
   }
 
   const orders = await Order.find(filter)
@@ -111,7 +111,7 @@ router.get('/me/delivery-history', [
   const limit = parseInt(req.query.limit) || 20;
   const skip = (page - 1) * limit;
 
-  const filter = { deliveryAgent: driverId, status: { $in: ['delivered', 'cancelled'] } };
+  const filter = { deliveryAgent: driverId, status: { $in: ['delivered', 'cancelled', 'failed-delivery'] } };
 
   const [orders, totalOrders] = await Promise.all([
     Order.find(filter)

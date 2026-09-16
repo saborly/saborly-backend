@@ -1100,15 +1100,16 @@ router.patch('/:id/driver-status', [
   resolveBranchContext,
   authorize('driver'),
   param('id').isMongoId().withMessage('Invalid order ID'),
-  body('status').isIn(['driverpickup', 'pickup', 'out-for-delivery', 'delivered']).withMessage('Invalid status'),
-  body('message').optional().trim()
+  body('status').isIn(['driverpickup', 'pickup', 'out-for-delivery', 'delivered', 'failed-delivery']).withMessage('Invalid status'),
+  body('message').optional().trim(),
+  body('reason').if(body('status').equals('failed-delivery')).trim().notEmpty().withMessage('Reason is required when marking a delivery as failed')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ success: false, errors: errors.array() });
   }
 
-  const { status, message } = req.body;
+  const { status, message, reason } = req.body;
   const order = await Order.findOne({ _id: req.params.id, branchId: req.branchId });
 
   if (!order) {
@@ -1127,14 +1128,25 @@ router.patch('/:id/driver-status', [
       }
     : null;
 
-  order.addTrackingUpdate(status, message || `Order status updated to ${status}`, location);
+  order.addTrackingUpdate(status, message || (status === 'failed-delivery' ? `Delivery failed: ${reason}` : `Order status updated to ${status}`), location);
 
-  if (status === 'delivered') {
-    order.actualDeliveryTime = new Date();
+  if (status === 'delivered' || status === 'failed-delivery') {
     order.deliveryTracking = order.deliveryTracking || {};
     order.deliveryTracking.isLive = false;
     order.deliveryTracking.endedAt = new Date();
     order.markModified('deliveryTracking');
+  }
+
+  if (status === 'delivered') {
+    order.actualDeliveryTime = new Date();
+  }
+
+  if (status === 'failed-delivery') {
+    order.failedDelivery = {
+      reason,
+      failedAt: new Date(),
+      failedBy: currentUserId
+    };
   }
 
   order.markModified('status');
@@ -1167,10 +1179,10 @@ router.patch('/:id/driver-status', [
     if (status === 'out-for-delivery') {
       io.to(`order:${order._id.toString()}`).emit('order:driver_started', { orderId: order._id.toString() });
     }
-    if (status === 'delivered') {
+    if (status === 'delivered' || status === 'failed-delivery') {
       io.to(`order:${order._id.toString()}`).emit('order:driver_ended', {
         orderId: order._id.toString(),
-        reason: 'delivered'
+        reason: status === 'delivered' ? 'delivered' : 'failed-delivery'
       });
     }
   }
@@ -1178,7 +1190,7 @@ router.patch('/:id/driver-status', [
   res.json({
     success: true,
     message: 'Delivery status updated successfully',
-    order: { id: order._id, status: order.status }
+    order: { id: order._id, status: order.status, failedDelivery: order.failedDelivery }
   });
 }));
 

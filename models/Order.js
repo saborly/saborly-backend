@@ -107,6 +107,7 @@ const orderSchema = new mongoose.Schema({
       'shop',
       'out-for-delivery',
       'delivered',
+      'failed-delivery',
       'cancelled',
       'refunded'
     ],
@@ -234,6 +235,14 @@ codPaymentType: {
     refundProcessed: {
       type: Boolean,
       default: false
+    }
+  },
+  failedDelivery: {
+    reason: String,
+    failedAt: Date,
+    failedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
     }
   }
 }, {
