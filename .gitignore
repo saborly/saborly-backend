@@ -6,6 +6,8 @@ config/firebase-service-account.json
 /dist
 /node_modules
 /build
+node_modules/
+.env
 
 # Logs
 logs

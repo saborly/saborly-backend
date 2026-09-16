@@ -6,13 +6,9 @@ const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { attachBranchToRequest, resolveBranchContext } = require('../middleware/branchContext');
 const { getTrackingStage, getTrackingStageLabel } = require('../utils/trackingStageMap');
+const { ACTIVE_DRIVER_STATUSES } = require('../utils/driverAssignment');
 
 const router = express.Router();
-
-// 'ready' is included so a driver can open/act on an order the moment it's
-// assigned, before they've physically picked it up (i.e. before the status
-// moves to driverpickup/pickup).
-const ACTIVE_DRIVER_STATUSES = ['ready', 'driverpickup', 'pickup', 'out-for-delivery'];
 
 function serializeDriverOrder(order) {
   return {
@@ -163,6 +159,92 @@ router.patch('/me/online-status', [
   const driver = await User.findByIdAndUpdate(driverId, { $set: update }, { new: true }).select('driverStatus');
 
   res.json({ success: true, driverStatus: driver.driverStatus });
+}));
+
+// @desc    Create a driver account for the admin's active branch
+// @route   POST /api/v1/drivers
+// @access  Private (admin/manager)
+router.post('/', [
+  auth,
+  attachBranchToRequest,
+  resolveBranchContext,
+  authorize('admin', 'manager'),
+  body('firstName')
+    .trim()
+    .notEmpty()
+    .withMessage('First name is required')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters'),
+  body('lastName')
+    .trim()
+    .notEmpty()
+    .withMessage('Last name is required')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters'),
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('phone')
+    .matches(/^\+?[\d\s-()]+$/)
+    .withMessage('Please provide a valid phone number'),
+  body('password')
+    .isLength({ min: 6 })
+    .withMessage('Password must be at least 6 characters long'),
+  body('vehicleType')
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(['bike', 'motorcycle', 'car', 'on_foot'])
+    .withMessage('Invalid vehicle type')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ success: false, message: 'Validation failed', errors: errors.array() });
+  }
+
+  const { firstName, lastName, email, phone, password, vehicleType } = req.body;
+
+  const existingUser = await User.findOne({
+    branchId: req.branchId,
+    $or: [{ email }, { phone }]
+  }).select('email phone').lean();
+
+  if (existingUser) {
+    return res.status(400).json({
+      success: false,
+      message: existingUser.email === email
+        ? 'A driver with this email already exists in this branch'
+        : 'A driver with this phone number already exists in this branch'
+    });
+  }
+
+  const driver = await User.create({
+    firstName,
+    lastName,
+    email,
+    phone,
+    password,
+    branchId: req.branchId,
+    role: 'driver',
+    emailVerified: true,
+    driverStatus: {
+      isOnline: false,
+      isAvailable: true,
+      ...(vehicleType ? { vehicleType } : {})
+    }
+  });
+
+  res.status(201).json({
+    success: true,
+    driver: {
+      id: driver._id,
+      firstName: driver.firstName,
+      lastName: driver.lastName,
+      email: driver.email,
+      phone: driver.phone,
+      branchId: driver.branchId,
+      driverStatus: driver.driverStatus
+    }
+  });
 }));
 
 // @desc    Branch-scoped list of drivers (for the admin's assign-driver picker)

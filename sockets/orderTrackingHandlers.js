@@ -2,6 +2,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const DriverLocationPing = require('../models/DriverLocationPing');
 const { getTrackingStage } = require('../utils/trackingStageMap');
+const { ACTIVE_DRIVER_STATUSES } = require('../utils/driverAssignment');
 
 const STAFF_ROLES = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
 const CROSS_BRANCH_ROLES = ['super_admin', 'superadmin'];
@@ -54,7 +55,7 @@ function scheduleBranchBroadcast(io, branchId) {
       const orders = await Order.find({
         branchId,
         deliveryAgent: { $ne: null },
-        status: { $in: ['ready', 'driverpickup', 'pickup', 'out-for-delivery'] }
+        status: { $in: ACTIVE_DRIVER_STATUSES }
       })
         .populate([
           { path: 'userId', select: 'firstName lastName phone' },

@@ -22,6 +22,7 @@ const {
 const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
 const { getTrackingStage, getTrackingStageLabel } = require('../utils/trackingStageMap');
+const { pickAvailableDriver } = require('../utils/driverAssignment');
 
 const STAFF_ROLES = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
 
@@ -997,9 +998,22 @@ router.patch('/:id/status', [
     order.actualDeliveryTime = new Date();
   }
 
+  // Auto-assign a driver the moment a delivery order is accepted, so admin
+  // doesn't have to remember to do it separately later. Only when there
+  // isn't one already (e.g. re-confirming) and only among drivers who are
+  // actually online right now — if none are, the order is simply left
+  // unassigned for admin to assign manually, same as before this existed.
+  let autoAssignedDriver = null;
+  if (status === 'confirmed' && order.deliveryType === 'delivery' && !order.deliveryAgent) {
+    autoAssignedDriver = await pickAvailableDriver(order.branchId);
+    if (autoAssignedDriver) {
+      order.deliveryAgent = autoAssignedDriver._id;
+    }
+  }
+
   // Mark status as modified to ensure it's saved
   order.markModified('status');
-  
+
   // Save the order after all updates
   await order.save();
 
@@ -1009,7 +1023,7 @@ router.patch('/:id/status', [
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price description' },
     { path: 'branchId', select: 'name address phone' },
-    { path: 'deliveryAgent', select: 'firstName lastName phone' }
+    { path: 'deliveryAgent', select: 'firstName lastName phone driverStatus' }
   ]);
 
   const orderUserId = orderDoc.userId._id ? orderDoc.userId._id.toString() : orderDoc.userId.toString();
@@ -1021,6 +1035,14 @@ router.patch('/:id/status', [
     message ? { title: '📦 Order Update', body: message } : null
   );
 
+  if (autoAssignedDriver && orderDoc.deliveryAgent) {
+    try {
+      await sendDeliveryAssignmentNotification(orderDoc.deliveryAgent, orderDoc);
+    } catch (err) {
+      console.error('Auto-assignment notification failed:', err.message);
+    }
+  }
+
   const io = req.app.get('io');
   if (io) {
     io.to(`order:${orderDoc._id.toString()}`).emit('order:status_changed', {
@@ -1031,6 +1053,24 @@ router.patch('/:id/status', [
       message: message || null,
       timestamp: new Date().toISOString()
     });
+
+    if (autoAssignedDriver && orderDoc.deliveryAgent) {
+      const driverPayload = {
+        id: orderDoc.deliveryAgent._id.toString(),
+        firstName: orderDoc.deliveryAgent.firstName,
+        lastName: orderDoc.deliveryAgent.lastName,
+        phone: orderDoc.deliveryAgent.phone,
+        vehicleType: orderDoc.deliveryAgent.driverStatus?.vehicleType || null
+      };
+      io.to(`driver:${orderDoc.deliveryAgent._id.toString()}`).emit('order:driver_assigned', {
+        orderId: orderDoc._id.toString(),
+        orderNumber: orderDoc.orderNumber
+      });
+      io.to(`order:${orderDoc._id.toString()}`).emit('order:driver_assigned', {
+        orderId: orderDoc._id.toString(),
+        driver: driverPayload
+      });
+    }
   }
 
   res.json({
@@ -1039,7 +1079,10 @@ router.patch('/:id/status', [
     order: {
       id: orderDoc._id,
       status: orderDoc.status,
-      estimatedTimeRemaining: orderDoc.estimatedTimeRemaining
+      estimatedTimeRemaining: orderDoc.estimatedTimeRemaining,
+      autoAssignedDriver: autoAssignedDriver
+        ? { id: autoAssignedDriver._id, firstName: autoAssignedDriver.firstName, lastName: autoAssignedDriver.lastName }
+        : null
     }
   });
 }));
