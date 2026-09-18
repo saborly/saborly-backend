@@ -43,48 +43,76 @@ const buildApnsConfig = () => ({
   }
 });
 
-const sendNotificationToDevice = async (fcmToken, title, body, data = {}) => {
+const sendNotificationToDevice = async (fcmToken, title, body, data = {}, options = {}) => {
   try {
     // Log Firebase project info for debugging
     const projectInfo = getFirebaseProjectInfo();
     console.log(`📤 Sending notification using Firebase Project: ${projectInfo.projectId}`);
     console.log(`🔑 FCM Token (first 20 chars): ${fcmToken?.substring(0, 20)}...`);
-    
+
     // ✅ FIXED: Sanitize data to ensure all values are strings
     const sanitizedData = sanitizeData({
       ...data,
+      title,
+      body,
       click_action: 'FLUTTER_NOTIFICATION_CLICK'
     });
 
-    const message = {
-      notification: {
-        title,
-        body
-      },
-      data: sanitizedData,
-      token: fcmToken,
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'order_updates',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+    // dataOnly: skip the top-level `notification` payload so the client always
+    // routes the message through its own background handler (even when the
+    // app is backgrounded or killed) instead of the OS auto-displaying it
+    // with a single short default chime — used for the driver "ring until
+    // seen" delivery-assignment alert, which drives its own looping sound.
+    const { dataOnly = false } = options;
+
+    const message = dataOnly
+      ? {
+          data: sanitizedData,
+          token: fcmToken,
+          android: {
+            priority: 'high'
+          },
+          apns: {
+            headers: {
+              'apns-priority': '5',
+              'apns-push-type': 'background'
+            },
+            payload: {
+              aps: {
+                'content-available': 1
+              }
+            }
+          }
         }
-      },
-      apns: {
-        ...buildApnsConfig()
-      },
-      webpush: {
-        notification: {
-          icon: '/icon.png', // Add your icon path
-          badge: '/badge.png', // Add your badge path
-          requireInteraction: false
-        },
-        fcmOptions: {
-          link: '/' // Default link when notification is clicked
-        }
-      }
-    };
+      : {
+          notification: {
+            title,
+            body
+          },
+          data: sanitizedData,
+          token: fcmToken,
+          android: {
+            priority: 'high',
+            notification: {
+              sound: 'default',
+              channelId: 'order_updates',
+              clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+            }
+          },
+          apns: {
+            ...buildApnsConfig()
+          },
+          webpush: {
+            notification: {
+              icon: '/icon.png', // Add your icon path
+              badge: '/badge.png', // Add your badge path
+              requireInteraction: false
+            },
+            fcmOptions: {
+              link: '/' // Default link when notification is clicked
+            }
+          }
+        };
 
     const response = await admin.messaging().send(message);
     console.log('✅ Successfully sent notification:', response);

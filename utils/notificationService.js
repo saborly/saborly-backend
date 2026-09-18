@@ -177,7 +177,10 @@ const sendNewOrderNotification = async (adminTokens, order) => {
   }
 };
 
-// Send delivery agent assignment notification
+// Send delivery agent assignment notification. Sent data-only (dataOnly:
+// true) so the driver app's own background handler always runs — even with
+// the app killed — and drives a looping "ring until seen" alert instead of
+// a single default OS chime.
 const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
   try {
     if (!deliveryAgent.fcmToken) {
@@ -191,11 +194,12 @@ const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
       type: 'delivery_assignment',
       orderId: order._id.toString(),
       orderNumber: order.orderNumber,
-      deliveryAddress: JSON.stringify(order.deliveryAddress),
+      total: (order.total ?? 0).toString(),
+      deliveryAddress: JSON.stringify(order.deliveryAddress || {}),
       timestamp: new Date().toISOString()
     };
 
-    const result = await sendNotificationToDevice(deliveryAgent.fcmToken, title, body, data);
+    const result = await sendNotificationToDevice(deliveryAgent.fcmToken, title, body, data, { dataOnly: true });
 
     // Remove the token if it's invalid/unregistered/mismatched - otherwise it gets retried forever
     const staleTokenCodes = [
@@ -230,6 +234,40 @@ const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
   }
 };
 
+// Notify branch admins/managers that a driver has completed (or failed) a
+// delivery. Sent data-only (dataOnly: true) like the new-order alert — a
+// plain `notification` payload would rely on the 'order_updates' channel,
+// which the admin app never registers, so Android 8+ would silently drop it
+// in the background. The admin app's own CustomFirebaseMessagingService
+// shows this via its existing (non-ringing) 'order_channel' instead.
+const sendDeliveryCompletedNotification = async (adminTokens, order, driver, status = 'delivered') => {
+  try {
+    if (!adminTokens || adminTokens.length === 0) {
+      return { success: false, message: 'No admin tokens' };
+    }
+
+    const driverName = driver ? `${driver.firstName || ''} ${driver.lastName || ''}`.trim() : 'Driver';
+    const title = status === 'delivered' ? '✅ Delivery Completed' : '⚠️ Delivery Failed';
+    const body = status === 'delivered'
+      ? `Order #${order.orderNumber} was delivered by ${driverName}`
+      : `Order #${order.orderNumber} delivery failed (${driverName})`;
+
+    const data = {
+      type: 'delivery_completed',
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      status,
+      driverName,
+      timestamp: new Date().toISOString()
+    };
+
+    return await sendNotificationToMultipleDevices(adminTokens, title, body, data, { dataOnly: true });
+  } catch (error) {
+    console.error('Error sending delivery completed notification:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 // Send promotional notification
 const sendPromotionalNotification = async (userTokens, title, body, promoData = {}) => {
   try {
@@ -250,5 +288,6 @@ module.exports = {
   sendOrderStatusNotification,
   sendNewOrderNotification,
   sendDeliveryAssignmentNotification,
+  sendDeliveryCompletedNotification,
   sendPromotionalNotification
 };

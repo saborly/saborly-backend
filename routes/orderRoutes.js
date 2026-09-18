@@ -15,6 +15,7 @@ const {
   sendOrderStatusNotification,
   sendNewOrderNotification,
   sendDeliveryAssignmentNotification,
+  sendDeliveryCompletedNotification,
 } = require('../utils/notificationService');
 const {
   sendNotificationToDevice,
@@ -870,6 +871,8 @@ router.get('/:id/tracking', [
       isLive: Boolean(order.deliveryTracking?.isLive),
       isStale,
       startedAt: order.deliveryTracking?.startedAt || null,
+      estimatedDeliveryTime: order.estimatedDeliveryTime || null,
+      estimatedTimeRemaining: order.estimatedTimeRemaining,
       branch: order.branchId
         ? { name: order.branchId.name, latitude: order.branchId.latitude, longitude: order.branchId.longitude }
         : null,
@@ -1164,6 +1167,45 @@ router.patch('/:id/driver-status', [
     );
   } catch (err) {
     console.error('Driver-status notification failed:', err.message);
+  }
+
+  // Let the branch's admins/managers know as soon as a driver finishes (or
+  // fails) a delivery, instead of them having to keep the dashboard open.
+  if (status === 'delivered' || status === 'failed-delivery') {
+    try {
+      const branchAdmins = await User.find({
+        role: { $in: ['admin', 'manager', 'superadmin', 'super_admin', 'branch_admin', 'staff'] },
+        isActive: true,
+        $or: [
+          { branchId: req.branchId },
+          { role: { $in: ['superadmin', 'super_admin'] } },
+        ],
+        $and: [
+          {
+            $or: [
+              { fcmToken: { $exists: true, $ne: null } },
+              { 'fcmTokens.0': { $exists: true } },
+            ],
+          },
+        ],
+      }).select('fcmToken fcmTokens').lean();
+
+      const adminTokens = [];
+      branchAdmins.forEach((admin) => {
+        if (admin.fcmToken) adminTokens.push(admin.fcmToken);
+        if (Array.isArray(admin.fcmTokens)) {
+          admin.fcmTokens.forEach((t) => {
+            if (t.token && !adminTokens.includes(t.token)) adminTokens.push(t.token);
+          });
+        }
+      });
+
+      if (adminTokens.length > 0) {
+        await sendDeliveryCompletedNotification(adminTokens, order, req.user, status);
+      }
+    } catch (err) {
+      console.error('Admin delivery-completed notification failed:', err.message);
+    }
   }
 
   const io = req.app.get('io');
