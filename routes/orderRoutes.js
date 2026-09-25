@@ -22,6 +22,7 @@ const {
 } = require("../utils/firebaseAdmin");
 const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
+const { normalizePhone, isValidPhone } = require('../utils/phoneUtils');
 const { getTrackingStage, getTrackingStageLabel } = require('../utils/trackingStageMap');
 const { pickAvailableDriver } = require('../utils/driverAssignment');
 
@@ -163,8 +164,10 @@ router.post('/', [
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
   body('subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be a positive number'),
   body('total').isFloat({ min: 0 }).withMessage('Total must be a positive number'),
-    body('contactPhone').optional({ values: 'falsy' }).trim()
-    .matches(/^\+?[\d\s\-()]{6,20}$/).withMessage('Invalid phone number'),
+  // Optional in the payload (older app builds never send it), but a phone is
+  // still mandatory — see the contactPhone resolution below.
+  body('contactPhone').optional({ values: 'falsy' })
+    .custom(isValidPhone).withMessage('Invalid phone number'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -172,6 +175,21 @@ router.post('/', [
       success: false,
       message: 'Validation failed',
       errors: errors.array()
+    });
+  }
+
+  // Every order must carry a phone number staff/drivers can call. Older app
+  // builds don't collect one at checkout, so fall back to the profile phone
+  // and reject the order outright if neither is usable. This runs before any
+  // side effects (stock decrement, discount claims) so a rejected order
+  // leaves nothing behind.
+  const contactPhone = normalizePhone(req.body.contactPhone) || normalizePhone(req.user.phone);
+  if (!isValidPhone(contactPhone)) {
+    console.warn(`Order rejected: no valid phone number for user ${req.user.id} (platform: ${req.body.platform || 'unknown'})`);
+    return res.status(400).json({
+      success: false,
+      code: 'PHONE_REQUIRED',
+      message: 'A valid phone number is required to place an order. Please add your phone number in your profile or update the app to the latest version.'
     });
   }
 
@@ -336,16 +354,13 @@ const {
   const total = firstOrderDiscountApplied
     ? Math.round((subtotal + deliveryFee + tax - discount) * 100) / 100
     : (clientTotal !== undefined ? clientTotal : (subtotal + deliveryFee + tax - discount));
-  const contactPhone = (req.body.contactPhone || req.user.phone || '').trim();
 
- 
   // orderNumber is generated in the Order pre-save hook (timestamp + random suffix)
   const orderData = {
     userId: req.user._id || req.user.id,
     customerName: [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim(),
     customerEmail: req.user.email || '',
     customerPhone: contactPhone,
-    contactStatus: contactPhone ? 'ok' : 'missing-phone',
     items: processedItems,
     subtotal,
     deliveryFee,

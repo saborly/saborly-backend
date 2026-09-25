@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { isValidPhone } = require('../utils/phoneUtils');
 
 const cartItemSchema = new mongoose.Schema({
   foodItem: {
@@ -67,7 +68,19 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  
+  // Phone staff/drivers use to reach the customer for this order. Enforced on
+  // creation only: orders placed before this field existed don't have it, and
+  // requiring it unconditionally would break status updates on them.
+  customerPhone: {
+    type: String,
+    trim: true,
+    required: [function() { return this.isNew; }, 'Customer phone number is required'],
+    validate: {
+      validator: isValidPhone,
+      message: 'Please provide a valid phone number'
+    }
+  },
+
   items: [cartItemSchema],
   subtotal: {
     type: Number,
