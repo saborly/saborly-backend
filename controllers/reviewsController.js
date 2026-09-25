@@ -13,7 +13,6 @@ const DETAIL_FIELDS = [
   'user_ratings_total',
   'price_level',
   'formatted_address',
-  'opening_hours',
   'reviews',
   'types',
 ].join(',');
@@ -96,7 +95,8 @@ function formatBranchReviews(branch, details, placeId) {
     reviewCount: details.user_ratings_total ?? 0,
     priceRange: priceLevelToRange(details.price_level),
     category: guessCategory(details.types),
-    openNow: details.opening_hours?.open_now ?? null,
+    // No open/closed status here: this payload is cached for 12h, so it would
+    // be stale. Clients compute it live from the restaurant's own schedule.
     // Deep link to the real listing on Google Maps, so "see all reviews"
     // can point users at Google's actual full review list instead of us
     // trying to reproduce more than the 5 Google's API gives us.
