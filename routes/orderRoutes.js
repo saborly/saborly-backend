@@ -180,9 +180,7 @@ router.post('/', [
 
   // Every order must carry a phone number staff/drivers can call. Older app
   // builds don't collect one at checkout, so fall back to the profile phone
-  // and reject the order outright if neither is usable. This runs before any
-  // side effects (stock decrement, discount claims) so a rejected order
-  // leaves nothing behind.
+  // and reject the order outright if neither is usable.
   const contactPhone = normalizePhone(req.body.contactPhone) || normalizePhone(req.user.phone);
   if (!isValidPhone(contactPhone)) {
     console.warn(`Order rejected: no valid phone number for user ${req.user.id} (platform: ${req.body.platform || 'unknown'})`);
@@ -295,6 +293,19 @@ const {
     calculatedSubtotal += totalPrice;
   }
 
+  // All checks passed — from here on the order is being placed.
+  // The account must hold the phone too, not just this order: staff screens
+  // show the customer's profile phone, so an existing account without one is
+  // updated (and confirmed) first. This is the first write, so if it fails the
+  // error propagates before any stock is touched and no order is created.
+  if (contactPhone !== normalizePhone(req.user.phone)) {
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { phone: contactPhone },
+      { runValidators: true }
+    );
+  }
+
   // Aggregate quantities per food item first — the same food item can appear as
   // multiple cart lines (different meal size/addons), and calling save() twice in
   // parallel on the same Mongoose document instance throws "Can't save() the same
@@ -378,13 +389,6 @@ const {
   // Add COD payment type if applicable
   if (codPaymentType) {
     orderData.codPaymentType = codPaymentType;
-  }
-   if (contactPhone && contactPhone !== req.user.phone) {
-    User.findByIdAndUpdate(
-      req.user._id,
-      { phone: contactPhone, needsPhone: false },
-      { runValidators: true }
-    ).catch(() => {});
   }
   const order = await Order.create(orderData);
 

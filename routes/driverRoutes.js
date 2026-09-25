@@ -114,7 +114,10 @@ router.get('/me/delivery-history', [
   const filter = { deliveryAgent: driverId, status: { $in: ['delivered', 'cancelled', 'failed-delivery'] } };
 
   const [orders, totalOrders] = await Promise.all([
+    // Past deliveries deliberately omit the customer's phone (see populate)
+    // — exclude the order's own phone snapshot for the same reason.
     Order.find(filter)
+      .select('-customerPhone')
       .populate([{ path: 'userId', select: 'firstName lastName' }])
       .sort({ updatedAt: -1 })
       .limit(limit)
