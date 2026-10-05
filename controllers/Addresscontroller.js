@@ -1,18 +1,7 @@
 const Address = require('../models/Address');
-const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
+const { validateCoordinates } = require('../utils/locationUtils');
+const { MAX_DELIVERY_DISTANCE_KM, getShopCoords, checkDeliveryDistance, sendDistanceRejection } = require('../utils/deliveryDistance');
 const fetch = require('node-fetch');
-
-const MAX_DELIVERY_DISTANCE = 3.5; // km
-
-// Returns { lat, lng } for the branch using the already-resolved branchDoc on req.
-function getShopCoords(req) {
-  const doc = req.branchDoc;
-  if (doc && doc.latitude != null && doc.longitude != null) {
-    return { lat: doc.latitude, lng: doc.longitude };
-  }
-  // Fallback: Barcelona main branch
-  return { lat: 41.4036344, lng: 2.1986439 };
-}
 
 // Get all saved addresses for user
 exports.getSavedAddresses = async (req, res) => {
@@ -71,17 +60,10 @@ exports.saveAddress = async (req, res) => {
       });
     }
 
-    // Calculate distance from shop
-    const shop = getShopCoords(req);
-    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
-
-    if (distance > MAX_DELIVERY_DISTANCE) {
-      return res.status(400).json({
-        success: false,
-        message: `Address is beyond our ${MAX_DELIVERY_DISTANCE}km delivery range`,
-        distance: distance.toFixed(1)
-      });
-    }
+    // Strict 3.5km limit on straight-line AND driving distance
+    const check = await checkDeliveryDistance(getShopCoords(req), latitude, longitude);
+    if (!check.allowed) return sendDistanceRejection(res, check);
+    const distance = check.drivingKm ?? check.straightKm;
 
     // Normalize type to match enum values
     const normalizedType = type ? type.charAt(0).toUpperCase() + type.slice(1).toLowerCase() : 'Home';
@@ -241,16 +223,8 @@ exports.updateAddress = async (req, res) => {
         });
       }
 
-      const shop = getShopCoords(req);
-      const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
-
-      if (distance > MAX_DELIVERY_DISTANCE) {
-        return res.status(400).json({
-          success: false,
-          message: `Address is beyond our ${MAX_DELIVERY_DISTANCE}km delivery range`,
-          distance: distance.toFixed(1)
-        });
-      }
+      const check = await checkDeliveryDistance(getShopCoords(req), latitude, longitude);
+      if (!check.allowed) return sendDistanceRejection(res, check);
     }
 
     // Update fields
@@ -386,16 +360,15 @@ exports.validateAddress = async (req, res) => {
       });
     }
 
-    const shop = getShopCoords(req);
-    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
-    const canDeliver = distance <= MAX_DELIVERY_DISTANCE;
+    const check = await checkDeliveryDistance(getShopCoords(req), latitude, longitude);
+    const distance = Math.max(check.straightKm, check.drivingKm ?? 0);
 
     res.json({
       success: true,
       data: {
         distance: distance.toFixed(1),
-        canDeliver,
-        maxDistance: MAX_DELIVERY_DISTANCE
+        canDeliver: check.allowed,
+        maxDistance: MAX_DELIVERY_DISTANCE_KM
       }
     });
   } catch (error) {

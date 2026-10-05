@@ -21,28 +21,13 @@ const {
   sendNotificationToDevice,
 } = require("../utils/firebaseAdmin");
 const { sendNotificationToTopic } = require('../utils/firebaseAdmin');
-const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
+const { validateCoordinates } = require('../utils/locationUtils');
+const { getShopCoords, checkDeliveryDistance, sendDistanceRejection } = require('../utils/deliveryDistance');
 const { normalizePhone, isValidPhone } = require('../utils/phoneUtils');
 const { getTrackingStage, getTrackingStageLabel } = require('../utils/trackingStageMap');
 const { pickAvailableDriver } = require('../utils/driverAssignment');
 
 const STAFF_ROLES = ['admin', 'manager', 'branch_admin', 'staff', 'super_admin', 'superadmin'];
-
-// Same 3.5km delivery radius enforced when saving an address
-// (controllers/Addresscontroller.js) — re-checked here because a client
-// could otherwise send an arbitrary deliveryAddress directly in the order
-// payload without ever going through the saved-address flow.
-const MAX_DELIVERY_DISTANCE = 3.5; // km
-
-// Mirrors Addresscontroller.js's getShopCoords: uses the resolved branch's
-// coordinates, falling back to the Barcelona main branch if unset.
-function getShopCoords(req) {
-  const doc = req.branchDoc;
-  if (doc && doc.latitude != null && doc.longitude != null) {
-    return { lat: doc.latitude, lng: doc.longitude };
-  }
-  return { lat: 41.4036344, lng: 2.1986439 };
-}
 
 const normalizeStringValue = (value) => {
   if (value === null || value === undefined) return value;
@@ -239,16 +224,10 @@ const {
       });
     }
 
-    const shop = getShopCoords(req);
-    const distance = calculateDistance(shop.lat, shop.lng, latitude, longitude);
-
-    if (distance > MAX_DELIVERY_DISTANCE) {
-      return res.status(400).json({
-        success: false,
-        message: `Address is beyond our ${MAX_DELIVERY_DISTANCE}km delivery range`,
-        distance: distance.toFixed(1)
-      });
-    }
+    // Strict 3.5km limit on BOTH straight-line and driving distance
+    // (utils/deliveryDistance.js); unverifiable distances are rejected.
+    const check = await checkDeliveryDistance(getShopCoords(req), latitude, longitude);
+    if (!check.allowed) return sendDistanceRejection(res, check);
   }
 
   // Always trust backend-resolved branch context to avoid client branch drift.
