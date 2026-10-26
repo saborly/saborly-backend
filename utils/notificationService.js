@@ -234,6 +234,45 @@ const sendDeliveryAssignmentNotification = async (deliveryAgent, order) => {
   }
 };
 
+// Tell an already-assigned driver that the order's status changed (confirmed,
+// preparing, ready, cancelled, ...). Data-only so the driver app's own handler
+// shows it via its 'delivery_channel' (a plain `notification` payload would
+// rely on the 'order_updates' channel, which the driver app never registers).
+const DRIVER_ORDER_MESSAGES = {
+  confirmed: 'has been confirmed',
+  preparing: 'is being prepared',
+  ready: 'is ready for pickup',
+  shop: 'is ready to be collected',
+  cancelled: 'has been cancelled'
+};
+
+const sendDriverOrderUpdateNotification = async (driver, order, status, reason = null) => {
+  try {
+    if (!driver || !driver.fcmToken) {
+      return { success: false, message: 'No FCM token' };
+    }
+
+    const title = status === 'cancelled' ? '❌ Order Cancelled' : '📦 Order Update';
+    const what = DRIVER_ORDER_MESSAGES[status] || `status is now ${status}`;
+    const body = status === 'cancelled' && reason
+      ? `Order #${order.orderNumber} has been cancelled: ${reason}`
+      : `Order #${order.orderNumber} ${what}`;
+
+    const data = {
+      type: 'order_update',
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      status,
+      timestamp: new Date().toISOString()
+    };
+
+    return await sendNotificationToDevice(driver.fcmToken, title, body, data, { dataOnly: true });
+  } catch (error) {
+    console.error('Error sending driver order update notification:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 // Notify branch admins/managers that a driver has completed (or failed) a
 // delivery. Sent data-only (dataOnly: true) like the new-order alert — a
 // plain `notification` payload would rely on the 'order_updates' channel,
@@ -288,6 +327,7 @@ module.exports = {
   sendOrderStatusNotification,
   sendNewOrderNotification,
   sendDeliveryAssignmentNotification,
+  sendDriverOrderUpdateNotification,
   sendDeliveryCompletedNotification,
   sendPromotionalNotification
 };

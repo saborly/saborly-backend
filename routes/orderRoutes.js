@@ -15,6 +15,7 @@ const {
   sendOrderStatusNotification,
   sendNewOrderNotification,
   sendDeliveryAssignmentNotification,
+  sendDriverOrderUpdateNotification,
   sendDeliveryCompletedNotification,
 } = require('../utils/notificationService');
 const {
@@ -921,8 +922,13 @@ router.patch('/:id/assign-driver', [
   order.deliveryAgent = driver._id;
   await order.save();
 
+  let driverNotified = false;
   try {
-    await sendDeliveryAssignmentNotification(driver, order);
+    const pushResult = await sendDeliveryAssignmentNotification(driver, order);
+    driverNotified = !!pushResult?.success;
+    if (!driverNotified) {
+      console.error(`Delivery assignment push not delivered to driver ${driver._id}:`, pushResult?.message || pushResult?.error || pushResult?.code);
+    }
   } catch (err) {
     console.error('Delivery assignment notification failed:', err.message);
   }
@@ -949,6 +955,7 @@ router.patch('/:id/assign-driver', [
   res.json({
     success: true,
     message: 'Driver assigned successfully',
+    driverNotified,
     order: { id: order._id, deliveryAgent: order.deliveryAgent }
   });
 }));
@@ -1025,7 +1032,7 @@ router.patch('/:id/status', [
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price description' },
     { path: 'branchId', select: 'name address phone' },
-    { path: 'deliveryAgent', select: 'firstName lastName phone driverStatus' }
+    { path: 'deliveryAgent', select: 'firstName lastName phone driverStatus fcmToken' }
   ]);
 
   const orderUserId = orderDoc.userId._id ? orderDoc.userId._id.toString() : orderDoc.userId.toString();
@@ -1045,16 +1052,31 @@ router.patch('/:id/status', [
     }
   }
 
+  // Already-assigned driver (not the one who just got the assignment push):
+  // tell them about the status change too.
+  const alreadyAssignedDriver = orderDoc.deliveryAgent && !autoAssignedDriver ? orderDoc.deliveryAgent : null;
+  if (alreadyAssignedDriver) {
+    try {
+      await sendDriverOrderUpdateNotification(alreadyAssignedDriver, orderDoc, status);
+    } catch (err) {
+      console.error('Driver order update notification failed:', err.message);
+    }
+  }
+
   const io = req.app.get('io');
   if (io) {
-    io.to(`order:${orderDoc._id.toString()}`).emit('order:status_changed', {
+    const statusPayload = {
       orderId: orderDoc._id.toString(),
       status,
       trackingStage: getTrackingStage(status),
       trackingStageLabel: getTrackingStageLabel(status),
       message: message || null,
       timestamp: new Date().toISOString()
-    });
+    };
+    io.to(`order:${orderDoc._id.toString()}`).emit('order:status_changed', statusPayload);
+    if (alreadyAssignedDriver) {
+      io.to(`driver:${alreadyAssignedDriver._id.toString()}`).emit('order:status_changed', statusPayload);
+    }
 
     if (autoAssignedDriver && orderDoc.deliveryAgent) {
       const driverPayload = {
@@ -1311,16 +1333,29 @@ router.patch('/:id/cancel', [
     console.error('Notification failed:', err);
   }
 
+  if (order.deliveryAgent) {
+    try {
+      const assignedDriver = await User.findById(order.deliveryAgent).select('fcmToken');
+      await sendDriverOrderUpdateNotification(assignedDriver, order, 'cancelled', reason);
+    } catch (err) {
+      console.error('Driver cancel notification failed:', err.message);
+    }
+  }
+
   const io = req.app.get('io');
   if (io) {
-    io.to(`order:${order._id.toString()}`).emit('order:status_changed', {
+    const cancelPayload = {
       orderId: order._id.toString(),
       status: order.status,
       trackingStage: getTrackingStage(order.status),
       trackingStageLabel: getTrackingStageLabel(order.status),
       message: reason,
       timestamp: new Date().toISOString()
-    });
+    };
+    io.to(`order:${order._id.toString()}`).emit('order:status_changed', cancelPayload);
+    if (order.deliveryAgent) {
+      io.to(`driver:${order.deliveryAgent.toString()}`).emit('order:status_changed', cancelPayload);
+    }
   }
 
   res.json({
